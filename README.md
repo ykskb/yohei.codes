@@ -22,3 +22,7 @@ bundle exec jekyll build
 # Run site locally
 bundle exec jekyll serve
 ```
+
+## Deployment
+
+Through GitHub Action: https://github.com/marketplace/actions/jekyll-deploy-action
