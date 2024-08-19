@@ -2,6 +2,8 @@
 layout: default
 title:  "xv6: ブートブロックはどう作られロードされるのか"
 lang: jp
+image:
+    path: /assets/images/dax86-xv6.png
 ---
 
 # xv6: ブートブロックはどう作られロードされるのか

@@ -2,6 +2,8 @@
 layout: default
 title: "Paper: MonetDB/X100: Hyper-Pipelining Query Execution"
 lang: en
+image:
+    path: /assets/images/screenshot.png
 ---
 
 # Paper: MonetDB/X100: Hyper-Pipelining Query Execution

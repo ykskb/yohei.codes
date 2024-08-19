@@ -2,6 +2,8 @@
 layout: default
 title: "DuckDBが採択した論文"
 lang: jp
+image:
+    path: /assets/images/screenshot.png
 ---
 
 # DuckDBが採択した論文

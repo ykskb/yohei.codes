@@ -2,6 +2,8 @@
 layout: default
 title: "文字列に効く動的計画法: レーベンシュタイン距離"
 lang: jp
+image:
+    path: /assets/images/levenshtein.png
 ---
 
 # 文字列に効く動的計画法: レーベンシュタイン距離

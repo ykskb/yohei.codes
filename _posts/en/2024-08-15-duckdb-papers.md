@@ -2,6 +2,8 @@
 layout: default
 title: "Papers Adopted by DuckDB"
 lang: en
+image:
+    path: /assets/images/screenshot.png
 ---
 
 # Papers Adopted by DuckDB

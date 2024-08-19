@@ -2,6 +2,8 @@
 layout: default
 title: "xv6 image: How exactly is the boot sector created and loaded?" 
 lang: en
+image:
+    path: /assets/images/dax86-xv6.png
 ---
 
 # xv6 image: How exactly is the boot sector created and loaded?

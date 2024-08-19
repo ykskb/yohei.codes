@@ -2,6 +2,8 @@
 layout: default
 title: "論文：MonetDB/X100: Hyper-Pipelining Query Execution"
 lang: jp
+image:
+    path: /assets/images/screenshot.png
 ---
 
 # 論文：MonetDB/X100: Hyper-Pipelining Query Execution

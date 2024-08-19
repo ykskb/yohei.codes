@@ -2,6 +2,8 @@
 layout: default
 title: "DP for String Metrics"
 lang: en
+image:
+    path: /assets/images/levenshtein.png
 ---
 
 # DP for String Metrics
