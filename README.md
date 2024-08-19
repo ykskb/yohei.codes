@@ -2,6 +2,10 @@
 
 My tech blog.
 
+## Theme
+
+Minima: https://github.com/jekyll/minima
+
 ## Commands
 
 ```sh
