@@ -82,3 +82,39 @@ Example:
     * Vectorized data align well with [SIMD](https://en.wikipedia.org/wiki/Single_instruction,_multiple_data) can significantly optimize data processing.
 
     * Less or no dependency between operations, so CPU pipelines can plan and execute operations effectively. 
+
+## Benchmarks
+
+* TPC-H Query 1: scan, arithmetic and aggregation operations on a large table. CPU-bound workload without complex operations such as `JOIN`.
+
+    * MySQL
+
+        * Execution time: `100 secs` which is significantly higher due to inefficiency of tuple-by-tuple processing.
+
+        * Breakdown: 10% for computation, 28% for hash table management for aggregation and 62% copying and navigating through records.
+
+        * Instructions per Cycle (IPC): around 0.8 which is low.
+
+    * X100
+
+        * Execution time: `20 secs` which is significantly lower.
+
+        * Breakdown: computation much larger fraction for computation itself. Operations for hash table and record navigation were minimized.
+
+        * IPC: around 2.0 which is higher compared to MySQL.
+
+## Notes on Monet DB 
+
+* Vertical Fragmentation: each column is store as a Binary Association Table (BAT), containing `[object_id, value]`
+
+    * Deletes: Marked by adding tuple IDs to a deletion list.
+
+    * Inserts: Handled by appending to separate delta columns.
+
+    * Updates: Implemented as a combination of a delete and an insert.
+
+    * Reorganization: when delta columns exceeds a small percentage of total table size, the delta is merged with the main storage.
+
+* Arrays of column data are passed as `restrict` pointers so C compiler would generate loop-pipelining, which is optimized processing of array data.
+
+* `GROUP BY` is optimized with bit-representations used directly as indices in an array of aggregation results.
