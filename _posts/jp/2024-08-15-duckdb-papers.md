@@ -14,6 +14,6 @@ DuckDB自体、またはデータベースの内部構造の理解を深める�
 
 > ### List of Articles
 > - [ベクターベースのクエリエンジン (MonetDB/X100: Hyper-Pipelining Query Execution)](/2024/08/16/paper-monet-db-x-100.html) 
-> - 高速でSerializableなMVCC（近日公開）
+> - [高速でSerializableなMVCC](/2024/08/20/paper-fast-serializable-mvcc.html)
 > - Join順序の最適化 （近日公開）
 > - サブクエリ展開（近日公開）

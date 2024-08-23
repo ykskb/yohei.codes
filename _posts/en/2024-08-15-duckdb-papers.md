@@ -16,6 +16,6 @@ This series is my notes from them. Please feel free to ping me for anything you 
 
 > ### List of Articles
 > - [Vectorized Query Engine (MonetDB/X100: Hyper-Pipelining Query Execution)](/2024/08/16/paper-monet-db-x-100.html) 
-> - Fast Serializable MVCC (coming soon)
+> - [Fast Serializable MVCC](/2024/08/20/paper-fast-serializable-mvcc.html)
 > - Join Ordering Optimization (coming soon)
 > - Unnesting Subqueries (coming soon)

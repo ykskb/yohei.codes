@@ -15,7 +15,7 @@ This articles is notes taken from the paper: [MonetDB/X100: Hyper-Pipelining Que
 > DuckDB can handle analytical query workloads incredibly fast. This series is my notes from the publications adopted by DuckDB (listed [here](https://duckdb.org/why_duckdb.html#standing-on-the-shoulders-of-giants)).
 >
 > - Vectorized Query Engine : this article
-> - Fast Serializable MVCC (coming soon)
+> - [Fast Serializable MVCC](/2024/08/20/paper-fast-serializable-mvcc.html)
 > - Join Ordering Optimization (coming soon)
 > - Unnesting Subqueries (coming soon)
 
