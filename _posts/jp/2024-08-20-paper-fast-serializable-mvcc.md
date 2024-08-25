@@ -8,8 +8,6 @@ image:
 
 # 論文：Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems
 
-This articles is notes taken from the paper:  published in 2015.
-
 この記事は、[Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems](https://db.in.tum.de/~muehlbau/papers/mvcc.pdf)という論文からのメモです。この論文は、2015年に発表されました。
 
 > ### シリーズ：DuckDBが採択した論文
