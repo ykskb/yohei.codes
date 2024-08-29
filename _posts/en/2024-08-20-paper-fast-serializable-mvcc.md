@@ -23,6 +23,10 @@ This articles is notes taken from the paper: [Fast Serializable Multi-Version Co
 
 This paper proposes an implementation of multiversion concurrency controll ([MVCC](https://en.wikipedia.org/wiki/Multiversion_concurrency_control)) which has less overhead and less locking while providing serializability. Most of MVCC implementations out there provide snapshot isolation ([SI](https://en.wikipedia.org/wiki/Snapshot_isolation)).
 
+> Database Isolation Levels: Snapshot vs Serializable
+>
+> I compared snapshot isolation level and serializable isolation level [here](/2023/09/07/snapshot-vs-serializable.html).
+
 ## Storage Locations of Versions
 
 * Conventional MVCC: scattered versions

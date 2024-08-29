@@ -23,6 +23,10 @@ image:
 
 この論文は、データベースの並行処理制御についてのもので、主なMVCCがスナップショット分離レベル([SI](https://en.wikipedia.org/wiki/Snapshot_isolation))を提供する中、シリアライザビリティを提供しつつ、オーバーヘッドとロックが少ないマルチバージョン並行性制御([MVCC](https://en.wikipedia.org/wiki/Multiversion_concurrency_control))の実装を提案しています。
 
+> DB分離レベル: スナップショット vs シリアライザブル
+>
+> スナップショット分離レベルとシリアライザブル分離レベルを比較した記事は[こちら](/2023/09/07/snapshot-vs-serializable.html)。
+
 ## バージョンのストレージと位置
 
 * 従来のMVCC: あちこちに存在するバージョン
