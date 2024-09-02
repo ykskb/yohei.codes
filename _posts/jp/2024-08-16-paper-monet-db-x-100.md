@@ -18,6 +18,8 @@ image:
 > - [高速でSerializableなMVCC](/2024/08/20/paper-fast-serializable-mvcc.html)
 > - Join順序の最適化 （近日公開）
 > - サブクエリ展開（近日公開）
+>
+> Note: DuckDBはこの論文で説明されているベクターベースのクエリエンジンのアイデアを実装していますが、ストレージのモデルはMonet DBとは違っており、Monet DBがコラムごとに別々のファイルに保存するのに対し、DuckDBはRow Groupという列と行のハイブリッドモデルを採用しています。（[DuckDBへのリンクはこちら](https://duckdb.org/docs/internals/storage.html#row-groups)）
 
 ## 主な内容
 

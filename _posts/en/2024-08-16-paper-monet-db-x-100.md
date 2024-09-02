@@ -18,6 +18,8 @@ This articles is notes taken from the paper: [MonetDB/X100: Hyper-Pipelining Que
 > - [Fast Serializable MVCC](/2024/08/20/paper-fast-serializable-mvcc.html)
 > - Join Ordering Optimization (coming soon)
 > - Unnesting Subqueries (coming soon)
+>
+> Note: though the concept of vectorized query execution model is adopted by DuckDB, the storage model explained in this paper is not the same as DuckDB's one. Each column data is stored separatly in MonetDB whereas DuckDB storage uses row groups as mentioned [here](https://duckdb.org/docs/internals/storage.html#row-groups).
 
 ## What is it about?
 
