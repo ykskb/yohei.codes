@@ -139,6 +139,12 @@ Both processes and threads are represented as `task_struct` in kernel.
         * Erlang: through BEAM virtual machine, lightweight processes are scheduled onto a smaller number of OS threads.
 
         * NodeJS: not conventional, but multiple tasks are handled concurrently with a small number of threads through event loop (event-driven architecture).
+
+> Languages without `m:n`
+>
+> Languages like Java or Rust provide provide an interface to kernel threads with `1:1` mapping as a language feature instead of providing `m:n` or green thread model.
+> 
+> In those language, `m:n`, green thread or fiber model of multithreading are typically implemented as libraries outside of language features / designs.
         
 ## Synchronization Mechanisms
 
