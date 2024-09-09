@@ -3,7 +3,7 @@ layout: default
 title: "DB分離レベル: スナップショット vs シリアライザブル"
 lang: jp
 image:
-    path: /assets/images/dp-regex.png
+    path: /assets/images/screenshot.png
 ---
 
 # DB分離レベル: スナップショット vs シリアライザブル

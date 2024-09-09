@@ -3,7 +3,7 @@ layout: default
 title: "DB Isolation Levels: Snapshot vs Serializable"
 lang: en
 image:
-    path: /assets/images/dp-regex.png
+    path: /assets/images/screenshot.png
 ---
 
 # Database Isolation Levels: Snapshot vs Serializable

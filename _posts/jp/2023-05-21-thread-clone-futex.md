@@ -3,7 +3,7 @@ layout: default
 title: "スレッド、clone、futexとCMPXCHG"
 lang: jp
 image:
-    path: /assets/images/dp-regex.png
+    path: /assets/images/screenshot.png
 ---
 
 # スレッド、clone、futexとCMPXCHG

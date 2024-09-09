@@ -3,7 +3,7 @@ layout: default
 title: "Thread, clone, futex and CMPXCHG"
 lang: en
 image:
-    path: /assets/images/dp-regex.png
+    path: /assets/images/screenshot.png
 ---
 
 # Thread, clone, futex and CMPXCHG
