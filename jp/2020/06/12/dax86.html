@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="jp"><head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>dax86: xv6が走る学習目的のx86エミュレーター | yohei.codes</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="dax86: xv6が走る学習目的のx86エミュレーター" />
+<meta property="og:locale" content="jp" />
+<meta name="description" content="dax86: xv6が走る学習目的のx86エミュレーター" />
+<meta property="og:description" content="dax86: xv6が走る学習目的のx86エミュレーター" />
+<link rel="canonical" href="https://yohei.codes/jp/2020/06/12/dax86.html" />
+<meta property="og:url" content="https://yohei.codes/2020/06/12/dax86.html" />
+<meta property="og:site_name" content="yohei.codes" />
+<meta property="og:image" content="https://yohei.codes/assets/images/dax86-xv6.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2020-06-12T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://yohei.codes/assets/images/dax86-xv6.png" />
+<meta property="twitter:title" content="dax86: xv6が走る学習目的のx86エミュレーター" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2020-06-12T00:00:00+00:00","datePublished":"2020-06-12T00:00:00+00:00","description":"dax86: xv6が走る学習目的のx86エミュレーター","headline":"dax86: xv6が走る学習目的のx86エミュレーター","image":"https://yohei.codes/assets/images/dax86-xv6.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://yohei.codes/2020/06/12/dax86.html"},"url":"https://yohei.codes/2020/06/12/dax86.html"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/jp/assets/main.css"><link type="application/atom+xml" rel="alternate" href="https://yohei.codes/jp/feed.xml" title="yohei.codes" /><script>
+if(!(window.doNotTrack === "1" || navigator.doNotTrack === "1" || navigator.doNotTrack === "yes" || navigator.msDoNotTrack === "1")) {
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-52885755-2', 'auto');
+  ga('send', 'pageview');
+}
+</script>
+  
+<link rel="apple-touch-icon" sizes="180x180" href="/jp/assets/images/favicon/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/jp/assets/images/favicon/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/jp/assets/images/favicon/favicon-16x16.png">
+    <link rel="manifest" href="/jp/assets/images/favicon/manifest.json">
+    <link rel="mask-icon" href="/jp/assets/images/favicon/safari-pinned-tab.svg" color="#5bbad5">
+    <meta name="msapplication-TileColor" content="#da532c">
+    <meta name="theme-color" content="#ffffff">
+  </head><body><header class="site-header" role="banner">
+
+    <div class="wrapper"><a class="site-title" rel="author" href="/jp/">yohei.codes</a><nav class="site-nav">
+          <input type="checkbox" id="nav-trigger" class="nav-trigger" />
+          <label for="nav-trigger">
+            <span class="menu-icon">
+              <svg viewBox="0 0 18 15" width="18px" height="15px">
+                <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.032C17.335,0,18,0.665,18,1.484L18,1.484z M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.032C17.335,6.031,18,6.696,18,7.516L18,7.516z M18,13.516C18,14.335,17.335,15,16.516,15H1.484 C0.665,15,0,14.335,0,13.516l0,0c0-0.82,0.665-1.483,1.484-1.483h15.032C17.335,12.031,18,12.695,18,13.516L18,13.516z"/>
+              </svg>
+            </span>
+          </label>
+  
+          <div class="trigger"><a class="page-link" href="/jp/about/">About</a>
+    
+    [          
+    
+        
+            <a href=" /2020/06/12/dax86.html">English</a> ]
+        
+    
+
+    
+    [          
+    
+        日本語 ]
+    
+</div>
+        </nav></div>
+  </header><main class="page-content" aria-label="Content">
+      <div class="wrapper">
+        <h1 id="dax86-xv6が走る学習目的のx86エミュレーター">dax86: xv6が走る学習目的のx86エミュレーター</h1>
+
+<p>MITで使われてた(る)教育用のOS、xv6を動かせるx86のエミュレーターを作りました。バイナリトランスレーションではなくCPU命令やMMU、デバイス等を手動で実装しました。</p>
+
+<p>レポジトリ: <a href="https://github.com/ykskb/dax86">https://github.com/ykskb/dax86</a></p>
+
+<p>以下READMEからの抜粋です。</p>
+
+<blockquote>
+  <p>なぜ作ったか:</p>
+
+  <ul>
+    <li>CPUの上でOSがどう実装されて動くのか知りたかった。</li>
+  </ul>
+
+  <p>何を作ったか:</p>
+
+  <ul>
+    <li>memfsのxv6がブートから走ります。</li>
+    <li>パイプライン化やアウトオブオーダー等は使わず、実装されてるCPU命令は一つ一つ順に実行されます。</li>
+    <li>理解の為にパフォーマンスよりもロジックやデバイスを分かりやすく表現することの方が重視されてます。CPU命令やハードウェアの実装には説明コメントも書かれています。</li>
+  </ul>
+</blockquote>
+
+<p>この記事ではこのプロジェクトで自分がどうCPUについて調べつつエミュレーターを実装していったか、また詰まった所などを書いてます。</p>
+
+<blockquote>
+  <p>このプロジェクトで学んだキーポイントを他の記事にしています。</p>
+
+  <ul>
+    <li><a href="/jp/2020/06/13/xv6-boot-block.html">xv6: ブートブロックはどう作られロードされるのか</a></li>
+    <li><a href="/jp/2020/06/18/xv6-memory-1.html">xv6: OSはどうメモリを参照、管理するのか（前編）</a></li>
+    <li><a href="/jp/2020/07/31/xv6-memory-2.html">xv6: OSはどうメモリを参照、管理するのか（後編）</a></li>
+    <li>dax86: デバイスエミュレーション *coming soon</li>
+  </ul>
+</blockquote>
+
+<h2 id="始まり">始まり</h2>
+
+<p>このプロジェクトはこの本、<a href="https://book.mynavi.jp/ec/products/detail/id=41347">自作エミュレータで学ぶx86アーキテクチャ</a>を読んで始まりました。かわいい女の子が表紙で戸惑うかどうかはさておき、逐次実行型のエミュレーターを作るには最適のスターターブックです。基本的な<code class="language-plaintext highlighter-rouge">mov</code>や<code class="language-plaintext highlighter-rouge">add</code>命令、さらにはクリティカルな<code class="language-plaintext highlighter-rouge">push</code>や<code class="language-plaintext highlighter-rouge">call</code>命令がeflagsやModR/Mの説明と共にどう実装すればいいか詳細に書かれています。dax86でのCPUの構造体やCPU命令の宣言構成等はこの本のコードを拡張したものになってます。</p>
+
+<p>本を読み終え、エミュレーターの形ができ、テスト用の実行バイナリがいくつか走るようになりました。しかしこの時点ではOSが走るには足りない実装が多数ありました。セグメントレジスターやコントロールレジスター、デバイスも無い状態ですし、32ビットの実行バイナリが前提だったので、スイッチを入れた時点ではリアルモード下で命令が16ビットで解釈される実際のx86マシンの動作も無い状況でした。さらにはCISCであるx86にはシングルバイト命令が約250個とダブルバイト命令が更に250個ほどあり、実装すべきCPU命令が山のように感じられました。</p>
+
+<h2 id="ブート">ブート</h2>
+
+<p>xv6を走らせるという目標に決めたので、基本的なシングルバイト命令の実装しつつx86アーキテクチャとxv6の内部を理解する為に様々なドキュメントやウェブサイトを読みました。x86についてはA20ラインやセグメンテーション、GDT(グローバルデスクリプター)やページングについて学び、xv6に於いてはブート部分のコードを読み、先述のメモリ管理構造に加えキーボードやディスクなどのデバイスが必要なことが分かりました。</p>
+
+<p>この時点ではブート部分辺りの理解や実装だったので、部分的にテスト用のアセンブリやCを書き、目標とする振る舞いを実装するといったTDD的なアプローチが出来ました。(<code class="language-plaintext highlighter-rouge">tests/exec</code>が該当ディレクトリです。)ただこの目標とする振る舞いの設定というのが簡単ではなく、自分の理解で設定するしか方法が無いので、本当にあってるのか不安な所が多々あり、実際に間違った理解でテストの目標を設定していた為に何回か後になって難解なバグとなって帰ってくるのを経験しました。具体的な例としては、GDTのベースアドレスの構成方法が間違っていて、テストケースである<code class="language-plaintext highlighter-rouge">0x00000000</code>(プロテクトモードに跳ぶ際によく使われる値)は構成できてて通っていたのですが、ゼロではない値をTSS(タスクステートセグメント)の為に構成する際にセットされた値が取得できずメモリーのエラーになってしまっていて、間違いを修正する為にかなりデバッグに労力と時間を費やすケースがありました。</p>
+
+<p>ブート部分では主に2箇所で苦労しました。カーネルのコードをディスクからメモリーにロードする部分とページサイズ拡張されたページディレクトリを使ったカーネルへのジャンプ命令です。後者ではIdenticalな(ゼロがゼロに対応してる)マッピングと仮想アドレスのマッピングの二つがなぜ必要なのか理解するのも苦労しました。これらについては別の記事で詳細に書きましたが、OSイメージの作成からカーネルへジャンプするまでを完全に理解するのは自分にとっては中々大変でした。</p>
+
+<h2 id="osの初期化">OSの初期化</h2>
+
+<p>ブートの実装が何とか終わり、xv6のメイン関数に到達しました。このメイン関数はデバイスやCPUチップ、メモリーページ等の初期化を行い、最終的にはユーザーモードでOSのプロセススケジューラーを走らせます。ここで最初に詰まったのはマルチプロセッサーの為の構造でした。マルチプロセッサー機構ではデバイス割り込みが事前に設定されたルートに従って特定のCPUに送られる必要があり、BIOSが作成するMP設定テーブルやIOAPI、LAPICといったCPUのチップを実装する必要がありました。インターネットで情報を探すのですが、実際に仮想デバイスやチップとして実装する際に使えるようなデータ遷移の情報は中々ありません。行き着くのは海外の大学のコンピュータサイエンスコース用のウェブサイトかインテルの公式ドキュメントでした。やはりこういう問題は開発者の日常的なものではなく、Stackoverflow等で欲しい情報が得られるのは稀でした。その他書籍を読んだりして何とか理解に辿り着き、最終的には非同期スレッドをタイマーやキーボード用に走らせ、ロックを使ってメインのCPUスレッドのメモリに割り込みデータを書き込むようにしました。</p>
+
+<p>メイン関数の後半では更なる労力と時間が必要とされました。先述したTSS(タスクステートセグメント)のバグや割り込み処理ルーチン等、命令実行のコンテクスト周りの実装でかなり詰まったのを覚えています。この時点では多数の初期化関数が走っていて部分的なテストケースを書くTDD的なアプローチはもう出来ませんでした。その為かなり力技なデバッグをする必要がありました。どこでバグが発生しているのかを見つける為、命令のログを実装したり、特定の命令ポインタ(EIP)をキャッチしてメモリ範囲を出力したりもしました。もはやコードが自分の管理下にあるという感覚は皆無でした。<code class="language-plaintext highlighter-rouge">objdump</code>から逆アセンブルされた命令をエミュレーターから出力されたログとメモリ範囲と比較して追うのは辛かったですが貴重で楽しく感じました。</p>
+
+<h2 id="最初のシェルコマンド">最初のシェルコマンド</h2>
+
+<p>最後のチャレンジは少し面白いものでした。カーネルのメイン関数はユーザーモードでプロセススケジューラーを始め、シェルを走らせるのが最後の仕事ですが、シェル開始のメッセージが表示されたのを確認したので、キーボードの入力をサポートする必要がありました。当然xv6は実際のマシンやqemuで走るのを想定されているので、キーボードのスキャンコードを適切に処理する機構を備えています。あまりホスト側のキーボードの設定をいじりたくなかったので、エミュレーターでは単純に<code class="language-plaintext highlighter-rouge">getchar</code>で取得したASCIIコードをスキャンコードに戻すマッピングを作りこの機能を実装しました。その後<code class="language-plaintext highlighter-rouge">ls</code>を入力し、ファイルがリストされるのを確認しました。今の所小文字のマッピングしか作っていないし、かなり遅いリストでしたがここまで結構な時間をかけたのもあり、恐らく自分の経験では最高な<code class="language-plaintext highlighter-rouge">ls</code>コマンドでした。</p>
+
+<p><img src="/assets/images/dax86-xv6.png" alt="dax86-xv6" /></p>
+
+<h2 id="あとがき">あとがき</h2>
+
+<p>この記事を書いてる時点で<code class="language-plaintext highlighter-rouge">ls</code>や<code class="language-plaintext highlighter-rouge">mkdir</code>、<code class="language-plaintext highlighter-rouge">echo</code>コマンド等が正常に走るのは確認したのですが、まだ完全に安定してはいないようです。恐らくユーザーモードでのページマッピングか割り込みのコンテクストスイッチがうまくいってないようで、時々xv6の”remap”のエラーになってしまうのが確認されましたし、ユーザーモードで特定の命令ポインタになるとセグメンテーションフォルトになってしまうのも確認されました。これらのことからまだ実装を調査して直す必要がありそうですし、まだxv6の理解出来ていないところもあるので、それらに努力してまたキーポイント等を記事でシェアできればと思います。ここまで読んで頂きありがとうございました。</p>
+
+      </div>
+    </main><footer class="site-footer h-card">
+  <data class="u-url" href="/jp/"></data>
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">yohei.codes</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col footer-col-1">
+        <ul class="contact-list">
+          <li class="p-name">yohei.codes</li><li><a class="u-email" href="mailto:me@yohei.codes">me@yohei.codes</a></li></ul>
+      </div>
+
+      <div class="footer-col footer-col-2"><ul class="social-media-list"><li><a href="https://github.com/ykskb"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#github"></use></svg> <span class="username">ykskb</span></a></li><li><a href="https://www.linkedin.com/in/yohei-kusakabe"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#linkedin"></use></svg> <span class="username">yohei-kusakabe</span></a></li><li><a href="https://www.twitter.com/yo__ohei"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#twitter"></use></svg> <span class="username">yo__ohei</span></a></li></ul>
+</div>
+
+      <div class="footer-col footer-col-3">
+        <p>I enjoy computer science stuff.</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+</body>
+
+</html>

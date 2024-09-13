@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>DP for String Metrics: Regular Expression | yohei.codes</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="DP for String Metrics: Regular Expression" />
+<meta property="og:locale" content="en" />
+<meta name="description" content="DP for String Metrics: Regular Expression" />
+<meta property="og:description" content="DP for String Metrics: Regular Expression" />
+<link rel="canonical" href="https://yohei.codes/2023/02/06/dp-regex.html" />
+<meta property="og:url" content="https://yohei.codes/2023/02/06/dp-regex.html" />
+<meta property="og:site_name" content="yohei.codes" />
+<meta property="og:image" content="https://yohei.codes/assets/images/dp-regex.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2023-02-06T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://yohei.codes/assets/images/dp-regex.png" />
+<meta property="twitter:title" content="DP for String Metrics: Regular Expression" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2023-02-06T00:00:00+00:00","datePublished":"2023-02-06T00:00:00+00:00","description":"DP for String Metrics: Regular Expression","headline":"DP for String Metrics: Regular Expression","image":"https://yohei.codes/assets/images/dp-regex.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://yohei.codes/2023/02/06/dp-regex.html"},"url":"https://yohei.codes/2023/02/06/dp-regex.html"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="https://yohei.codes/feed.xml" title="yohei.codes" /><script>
+if(!(window.doNotTrack === "1" || navigator.doNotTrack === "1" || navigator.doNotTrack === "yes" || navigator.msDoNotTrack === "1")) {
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-52885755-2', 'auto');
+  ga('send', 'pageview');
+}
+</script>
+  
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/images/favicon/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/favicon/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/favicon/favicon-16x16.png">
+    <link rel="manifest" href="/assets/images/favicon/manifest.json">
+    <link rel="mask-icon" href="/assets/images/favicon/safari-pinned-tab.svg" color="#5bbad5">
+    <meta name="msapplication-TileColor" content="#da532c">
+    <meta name="theme-color" content="#ffffff">
+  </head><body><header class="site-header" role="banner">
+
+    <div class="wrapper"><a class="site-title" rel="author" href="/">yohei.codes</a><nav class="site-nav">
+          <input type="checkbox" id="nav-trigger" class="nav-trigger" />
+          <label for="nav-trigger">
+            <span class="menu-icon">
+              <svg viewBox="0 0 18 15" width="18px" height="15px">
+                <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.032C17.335,0,18,0.665,18,1.484L18,1.484z M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.032C17.335,6.031,18,6.696,18,7.516L18,7.516z M18,13.516C18,14.335,17.335,15,16.516,15H1.484 C0.665,15,0,14.335,0,13.516l0,0c0-0.82,0.665-1.483,1.484-1.483h15.032C17.335,12.031,18,12.695,18,13.516L18,13.516z"/>
+              </svg>
+            </span>
+          </label>
+  
+          <div class="trigger"><a class="page-link" href="/about/">About</a>
+    
+    [          
+    
+        English ]
+    
+
+    
+    [          
+    
+        
+            <a href="/jp/2023/02/06/dp-regex.html">日本語</a> ]
+        
+    
+</div>
+        </nav></div>
+  </header><main class="page-content" aria-label="Content">
+      <div class="wrapper">
+        <h1 id="dp-for-string-metrics-regular-expression">DP for String Metrics: Regular Expression</h1>
+
+<p>This articles is about regular expression in a series of articles: <a href="#series-dp-for-string-metrics">DP for String Metrics</a>.</p>
+
+<blockquote>
+  <h3 id="series-dp-for-string-metrics">Series: DP for String Metrics</h3>
+
+  <p>Dynamic programming (DP) solves a complicate problem in <a href="https://en.wikipedia.org/wiki/Optimal_substructure">optimal substructure</a> by breaking it down into simpler sub-problems, and there are DP patterns that are very effective for string metrics. These articles are my summary notes on them. Please feel free to ping me for anything you think I should add.</p>
+
+  <ul>
+    <li><a href="/2023/02/03/dp-levenshtein.html">Levenshtein Distance</a></li>
+    <li><a href="/2023/02/05/dp-lcs.html">Longest Common Subsequence</a></li>
+    <li>Regular Expression: this article</li>
+    <li>Distinct Subsequence (coming soon)</li>
+    <li>Longest Repeating Subsequence (coming soon)</li>
+    <li>Hamming Distance (coming soon)</li>
+  </ul>
+</blockquote>
+
+<h2 id="regular-expression-with-dp">Regular Expression with DP</h2>
+
+<p>This is a problem to check regular expression matching with dynamic programming. It’s actually a simplified regex with limited patterns including <code class="language-plaintext highlighter-rouge">.</code> , <code class="language-plaintext highlighter-rouge">*</code> and <code class="language-plaintext highlighter-rouge">characters</code> only. Real implementations of regular expression support more syntaxes and they are more complicated.</p>
+
+<p>Following is the explanation of symbols:</p>
+
+<ul>
+  <li>character = literal match</li>
+  <li><code class="language-plaintext highlighter-rouge">.</code> = any character</li>
+  <li><code class="language-plaintext highlighter-rouge">*</code> = 0 or more of preceding expression (<code class="language-plaintext highlighter-rouge">+</code> is 1 or more and <code class="language-plaintext highlighter-rouge">?</code> is 0 or 1)</li>
+</ul>
+
+<p>Literal character matching needs characters to be in an exact position and order. For example, a pattern of <code class="language-plaintext highlighter-rouge">abc</code> without any metacharacter matches only with <code class="language-plaintext highlighter-rouge">abc</code>. The metacharacter of <code class="language-plaintext highlighter-rouge">.</code> matches with any character, which seems straightforward. The metacharacter of <code class="language-plaintext highlighter-rouge">*</code> is a little tricky here. It matches with repeated occurrence of previous expression, but it also accepts 0 occurence. For example, having <code class="language-plaintext highlighter-rouge">abcccd</code>, a pattern of <code class="language-plaintext highlighter-rouge">abc*d</code> is a match, but <code class="language-plaintext highlighter-rouge">abc*de*</code> is also a match since <code class="language-plaintext highlighter-rouge">e*</code> means <code class="language-plaintext highlighter-rouge">e</code> can exist 0 time as well.</p>
+
+<h3 id="dp-table">DP Table</h3>
+
+<p>In the table below, “abcccd” (vertically mapped on left) is the string to be checked with the pattern, “a.c*de*” (mapped horizontally on top). We define base cases to be empty character, so only <code class="language-plaintext highlighter-rouge">[0, 0]</code> is true for the character match and the rest of cells in the first row &amp; column are all false.</p>
+
+<p>We go through each cell from position <code class="language-plaintext highlighter-rouge">[1, 1]</code> to right every row, comparing each character against a pattern character. When the two characters match, the cell is updated with the value from above and left. The same goes when a pattern character is <code class="language-plaintext highlighter-rouge">.</code> since it matches with any character. This chain of bool values from top left to bottom right is the basis of this DP to judge if a pattern match happens or not. A pattern character of <code class="language-plaintext highlighter-rouge">*</code> requires checks of different angles. Firstly we need to bring a DP value of 2 cells left from a current cell. This is because <code class="language-plaintext highlighter-rouge">*</code> character accepts 0 occurrence of previous character. This update actually serves for actual occurrence of the previous character as well. When an actual sequence of a previous character happens, we update the current cell from one above, which would make the current cell true only when there’s a match before a sequential pattern such as <code class="language-plaintext highlighter-rouge">c*</code> starts. Finally we get the result at the last cell.</p>
+
+<p><img src="/assets/images/dp-regex.png" style="background-color: #FFF;" />
+<!-- ![dp-regex-table](/image/dp-regex.png) --></p>
+
+<p>Before closing DP table explanation, there’s an edge case we need to handle actually. When a pattern has only sequential matches like <code class="language-plaintext highlighter-rouge">a*</code> or <code class="language-plaintext highlighter-rouge">a*b*c*</code> for example, we would not get the true value we vertically copied in the above case. So what we need is that 0 occurrence check we did in the example on the first row before starting DP table updates. This can be found in implementation below.</p>
+
+<h3 id="implementation">Implementation</h3>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">regex</span><span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="n">pattern</span><span class="p">):</span>
+    <span class="n">slen</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="n">plen</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">pattern</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="n">dp</span> <span class="o">=</span> <span class="p">[[</span><span class="bp">False</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">plen</span><span class="p">)]</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">slen</span><span class="p">)]</span>
+    <span class="n">dp</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="bp">True</span>
+
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">plen</span><span class="p">):</span>  <span class="c1"># handles sequential pattern in the first row
+</span>        <span class="k">if</span> <span class="n">pattern</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s">'*'</span><span class="p">:</span>
+            <span class="n">dp</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">dp</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="n">i</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span>
+
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">slen</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">plen</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">pattern</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s">'.'</span> <span class="ow">or</span> <span class="n">pattern</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="n">s</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]:</span>  <span class="c1"># '.' or char match
+</span>                <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>  <span class="c1"># diagnal update
+</span>            <span class="k">elif</span> <span class="n">pattern</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s">'*'</span><span class="p">:</span>  <span class="c1"># sequence pattern
+</span>                <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span>  <span class="c1"># update for 0 occurence
+</span>                <span class="k">if</span> <span class="n">pattern</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span> <span class="o">==</span> <span class="s">'.'</span> <span class="ow">or</span> <span class="n">pattern</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span> <span class="o">==</span> <span class="n">s</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]:</span>  <span class="c1"># match before sequence pattern
+</span>                    <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="p">]</span>  <span class="c1"># vertical update
+</span>
+    <span class="k">return</span> <span class="n">dp</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+</code></pre></div></div>
+
+      </div>
+    </main><footer class="site-footer h-card">
+  <data class="u-url" href="/"></data>
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">yohei.codes</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col footer-col-1">
+        <ul class="contact-list">
+          <li class="p-name">yohei.codes</li><li><a class="u-email" href="mailto:me@yohei.codes">me@yohei.codes</a></li></ul>
+      </div>
+
+      <div class="footer-col footer-col-2"><ul class="social-media-list"><li><a href="https://github.com/ykskb"><svg class="svg-icon"><use xlink:href="/assets/minima-social-icons.svg#github"></use></svg> <span class="username">ykskb</span></a></li><li><a href="https://www.linkedin.com/in/yohei-kusakabe"><svg class="svg-icon"><use xlink:href="/assets/minima-social-icons.svg#linkedin"></use></svg> <span class="username">yohei-kusakabe</span></a></li><li><a href="https://www.twitter.com/yo__ohei"><svg class="svg-icon"><use xlink:href="/assets/minima-social-icons.svg#twitter"></use></svg> <span class="username">yo__ohei</span></a></li></ul>
+</div>
+
+      <div class="footer-col footer-col-3">
+        <p>I enjoy computer science stuff.</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+</body>
+
+</html>

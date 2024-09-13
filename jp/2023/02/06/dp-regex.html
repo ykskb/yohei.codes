@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="jp"><head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>文字列に効く動的計画法: 正規表現チェック | yohei.codes</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="文字列に効く動的計画法: 正規表現チェック" />
+<meta property="og:locale" content="jp" />
+<meta name="description" content="文字列に効く動的計画法: 正規表現チェック" />
+<meta property="og:description" content="文字列に効く動的計画法: 正規表現チェック" />
+<link rel="canonical" href="https://yohei.codes/jp/2023/02/06/dp-regex.html" />
+<meta property="og:url" content="https://yohei.codes/2023/02/06/dp-regex.html" />
+<meta property="og:site_name" content="yohei.codes" />
+<meta property="og:image" content="https://yohei.codes/assets/images/dp-regex.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2023-02-06T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://yohei.codes/assets/images/dp-regex.png" />
+<meta property="twitter:title" content="文字列に効く動的計画法: 正規表現チェック" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2023-02-06T00:00:00+00:00","datePublished":"2023-02-06T00:00:00+00:00","description":"文字列に効く動的計画法: 正規表現チェック","headline":"文字列に効く動的計画法: 正規表現チェック","image":"https://yohei.codes/assets/images/dp-regex.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://yohei.codes/2023/02/06/dp-regex.html"},"url":"https://yohei.codes/2023/02/06/dp-regex.html"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/jp/assets/main.css"><link type="application/atom+xml" rel="alternate" href="https://yohei.codes/jp/feed.xml" title="yohei.codes" /><script>
+if(!(window.doNotTrack === "1" || navigator.doNotTrack === "1" || navigator.doNotTrack === "yes" || navigator.msDoNotTrack === "1")) {
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-52885755-2', 'auto');
+  ga('send', 'pageview');
+}
+</script>
+  
+<link rel="apple-touch-icon" sizes="180x180" href="/jp/assets/images/favicon/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/jp/assets/images/favicon/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/jp/assets/images/favicon/favicon-16x16.png">
+    <link rel="manifest" href="/jp/assets/images/favicon/manifest.json">
+    <link rel="mask-icon" href="/jp/assets/images/favicon/safari-pinned-tab.svg" color="#5bbad5">
+    <meta name="msapplication-TileColor" content="#da532c">
+    <meta name="theme-color" content="#ffffff">
+  </head><body><header class="site-header" role="banner">
+
+    <div class="wrapper"><a class="site-title" rel="author" href="/jp/">yohei.codes</a><nav class="site-nav">
+          <input type="checkbox" id="nav-trigger" class="nav-trigger" />
+          <label for="nav-trigger">
+            <span class="menu-icon">
+              <svg viewBox="0 0 18 15" width="18px" height="15px">
+                <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.032C17.335,0,18,0.665,18,1.484L18,1.484z M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.032C17.335,6.031,18,6.696,18,7.516L18,7.516z M18,13.516C18,14.335,17.335,15,16.516,15H1.484 C0.665,15,0,14.335,0,13.516l0,0c0-0.82,0.665-1.483,1.484-1.483h15.032C17.335,12.031,18,12.695,18,13.516L18,13.516z"/>
+              </svg>
+            </span>
+          </label>
+  
+          <div class="trigger"><a class="page-link" href="/jp/about/">About</a>
+    
+    [          
+    
+        
+            <a href=" /2023/02/06/dp-regex.html">English</a> ]
+        
+    
+
+    
+    [          
+    
+        日本語 ]
+    
+</div>
+        </nav></div>
+  </header><main class="page-content" aria-label="Content">
+      <div class="wrapper">
+        <h1 id="文字列に効く動的計画法-正規表現チェック">文字列に効く動的計画法: 正規表現チェック</h1>
+
+<p>この記事は「<a href="/jp/2023/02/02/dp-for-string-metrics.md">文字列に効く動的計画法</a>」シリーズの正規表現チェックに関する記事です。</p>
+
+<blockquote>
+  <h3 id="文字列の為の動的計画法">文字列の為の動的計画法</h3>
+
+  <p>動的計画法(DP)は複雑な問題をより小さく単純な部分問題に分割し解決する手法です。その中には文字列メトリクスに対して効果的なパターンもいくつかあり、このシリーズはそれらに関する私のまとめノートです。何か追加すべきものがあると思われる場合は、お気軽にお問い合わせください。</p>
+
+  <ul>
+    <li><a href="/jp/2023/02/03/dp-levenshtein.html">レーベンシュタイン距離</a></li>
+    <li><a href="/jp/2023/02/05/dp-lcs.html">最長共通部分列(LCS)</a></li>
+    <li>正規表現チェック: この記事です。</li>
+    <li>Distinct Subsequence (coming soon)</li>
+    <li>Longest Repeating Subsequence (coming soon)</li>
+    <li>Hamming Distance (coming soon)</li>
+  </ul>
+</blockquote>
+
+<h2 id="dp-を使った正規表現チェック">DP を使った正規表現チェック</h2>
+
+<p>この問題は動的プログラミングを使って正規表現のマッチをチェックする問題です。正規表現といっても正確には文字の一致に加え「.」と「*」のパターンだけを含む簡素化されたものであり、実際の正規表現はより多くの構文をサポートしており、実装はより複雑です。</p>
+
+<p>以下、パターン文字の説明です：</p>
+
+<ul>
+  <li>文字 = リテラルマッチ</li>
+  <li><code class="language-plaintext highlighter-rouge">.</code> = 任意の文字</li>
+  <li><code class="language-plaintext highlighter-rouge">*</code> = 一文字前の表現の 0 回以上の繰り返し（<code class="language-plaintext highlighter-rouge">+</code>は 1 回以上、<code class="language-plaintext highlighter-rouge">?</code>は 0 または 1 回）</li>
+</ul>
+
+<p>リテラル文字のマッチングは、文字が正確な位置と順序にある必要があります。例えば、メタ記号のないパターン<code class="language-plaintext highlighter-rouge">abc</code>に一致する文字列は<code class="language-plaintext highlighter-rouge">abc</code>だけです。<code class="language-plaintext highlighter-rouge">.</code>の記号は任意の文字に一致します。この問題の中で少し特殊なのは<code class="language-plaintext highlighter-rouge">*</code>の記号です。<code class="language-plaintext highlighter-rouge">*</code>は一つ前の文字の繰り返しにマッチしますが、「一つ前の文字が一切ない（0 回起きる）」という状態もマッチします。例えば、<code class="language-plaintext highlighter-rouge">abcccd</code>という文字列がある場合、<code class="language-plaintext highlighter-rouge">abc*d</code>が一致するのは分かりやすい例ですが、<code class="language-plaintext highlighter-rouge">abc*de*</code>も一致します（<code class="language-plaintext highlighter-rouge">e*</code>は<code class="language-plaintext highlighter-rouge">e</code>が 0 回存在することもマッチするためです。）</p>
+
+<h3 id="dp-テーブル">DP テーブル</h3>
+
+<p>以下の表では、上部に水平にマップされた<code class="language-plaintext highlighter-rouge">a.c*de*</code>が正規表現パターン、左側に縦にマップされた<code class="language-plaintext highlighter-rouge">abcccd</code>がパターンに比較される文字列となります。空の文字を基本ケースとして定義しますので、文字マッチでは<code class="language-plaintext highlighter-rouge">[0, 0]</code>だけが<code class="language-plaintext highlighter-rouge">true</code>で、最初の行と列の残りのセルはすべて<code class="language-plaintext highlighter-rouge">false</code>になります。</p>
+
+<p>各セルを<code class="language-plaintext highlighter-rouge">[1, 1]</code>の位置から右方向へ各行見ていきます。セル毎にパターン文字と対象文字を比較し、2 つの文字が一致する場合、セルを左上からの値で更新します。パターン文字が<code class="language-plaintext highlighter-rouge">.</code>である場合も同様 になります（任意の文字に一致するため）。この対角線方向に動く真偽値の繋がりがパターンマッチが有効かどうかを表し、この DP の結果となります。<code class="language-plaintext highlighter-rouge">*</code>のパターン文字には、異なる角度の検証が必要になります。まず現在見ているセルから 2 つ左の DP 値が必要です。これは前述した様に<code class="language-plaintext highlighter-rouge">*</code>が「一つ前の文字が一切無い（0 回起きる）」という状態を反映するためです。実はこの更新は一つ前の文字が実際の文字列に存在する場合にも重要な効果を発揮します。一つ前の文字の繰り返しが実際に起こった場合、一つ上の値で現在のセルを更新します。これは、繰り返しのパターン（例えば<code class="language-plaintext highlighter-rouge">c*</code>）の直前までマッチしている場合にのみ現在のセルが<code class="language-plaintext highlighter-rouge">true</code>になり、それがパターン全体のマッチ結果に繋がるわけです。そして最終的に一番右下のセルが結果となります。</p>
+
+<p><img src="/assets/images/dp-regex.png" style="background-color: #FFF;" />
+<!-- ![dp-regex-table](/image/dp-regex.png) --></p>
+
+<p>上記の DP テーブルがこの問題のメインロジックですが、実は別で検証すべきコーナーケースがあります。パターンが<code class="language-plaintext highlighter-rouge">a*</code>や<code class="language-plaintext highlighter-rouge">a*b*c*</code>のような繰り返しのマッチ表現のみを持つ場合、上記の DP テーブルで縦に更新した<code class="language-plaintext highlighter-rouge">true</code>の値が存在しなくなってしまいます。これは繰り返しのパターンの前に文字が無い為に起こります。このコーナーケースは DP テーブル全行を更新し始める前に、最初の行飲みを対象に 0 回出現のチェックをすることで解決できます。</p>
+
+<h3 id="実装">実装</h3>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">regex</span><span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="n">pattern</span><span class="p">):</span>
+    <span class="n">slen</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="n">plen</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">pattern</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="n">dp</span> <span class="o">=</span> <span class="p">[[</span><span class="bp">False</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">plen</span><span class="p">)]</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">slen</span><span class="p">)]</span>
+    <span class="n">dp</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="bp">True</span>
+
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">plen</span><span class="p">):</span>  <span class="c1"># handles sequential pattern in the first row
+</span>        <span class="k">if</span> <span class="n">pattern</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s">'*'</span><span class="p">:</span>
+            <span class="n">dp</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">dp</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="n">i</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span>
+
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">slen</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">plen</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">pattern</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s">'.'</span> <span class="ow">or</span> <span class="n">pattern</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="n">s</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]:</span>  <span class="c1"># '.' or char match
+</span>                <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>  <span class="c1"># diagnal update
+</span>            <span class="k">elif</span> <span class="n">pattern</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s">'*'</span><span class="p">:</span>  <span class="c1"># sequence pattern
+</span>                <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span>  <span class="c1"># update for 0 occurence
+</span>                <span class="k">if</span> <span class="n">pattern</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span> <span class="o">==</span> <span class="s">'.'</span> <span class="ow">or</span> <span class="n">pattern</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span> <span class="o">==</span> <span class="n">s</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]:</span>  <span class="c1"># match before sequence pattern
+</span>                    <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="p">]</span>  <span class="c1"># vertical update
+</span>
+    <span class="k">return</span> <span class="n">dp</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+</code></pre></div></div>
+
+      </div>
+    </main><footer class="site-footer h-card">
+  <data class="u-url" href="/jp/"></data>
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">yohei.codes</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col footer-col-1">
+        <ul class="contact-list">
+          <li class="p-name">yohei.codes</li><li><a class="u-email" href="mailto:me@yohei.codes">me@yohei.codes</a></li></ul>
+      </div>
+
+      <div class="footer-col footer-col-2"><ul class="social-media-list"><li><a href="https://github.com/ykskb"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#github"></use></svg> <span class="username">ykskb</span></a></li><li><a href="https://www.linkedin.com/in/yohei-kusakabe"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#linkedin"></use></svg> <span class="username">yohei-kusakabe</span></a></li><li><a href="https://www.twitter.com/yo__ohei"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#twitter"></use></svg> <span class="username">yo__ohei</span></a></li></ul>
+</div>
+
+      <div class="footer-col footer-col-3">
+        <p>I enjoy computer science stuff.</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+</body>
+
+</html>

@@ -1,0 +1,1311 @@
+<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" ><generator uri="https://jekyllrb.com/" version="3.10.0">Jekyll</generator><link href="https://yohei.codes/feed.xml" rel="self" type="application/atom+xml" /><link href="https://yohei.codes/" rel="alternate" type="text/html" /><updated>2024-09-13T16:22:32+00:00</updated><id>https://yohei.codes/feed.xml</id><title type="html">yohei.codes</title><subtitle>I enjoy computer science stuff.</subtitle><entry xml:lang="en"><title type="html">Paper: Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems</title><link href="https://yohei.codes/2024/08/20/paper-fast-serializable-mvcc.html" rel="alternate" type="text/html" title="Paper: Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems" /><published>2024-08-20T00:00:00+00:00</published><updated>2024-08-20T00:00:00+00:00</updated><id>https://yohei.codes/2024/08/20/paper-fast-serializable-mvcc</id><content type="html" xml:base="https://yohei.codes/2024/08/20/paper-fast-serializable-mvcc.html"><![CDATA[<h1 id="paper-fast-serializable-multi-version-concurrency-control-for-main-memory-database-systems">Paper: Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems</h1>
+
+<p>This articles is notes taken from the paper: <a href="https://db.in.tum.de/~muehlbau/papers/mvcc.pdf">Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems</a> published in 2015.</p>
+
+<blockquote>
+  <h3 id="series-papers-adopted-by-duckdb">Series: Papers adopted by DuckDB</h3>
+
+  <p>DuckDB can handle analytical query workloads incredibly fast. This series is my notes from the publications adopted by DuckDB (listed <a href="https://duckdb.org/why_duckdb.html#standing-on-the-shoulders-of-giants">here</a>).</p>
+
+  <ul>
+    <li><a href="/2024/08/16/paper-monet-db-x-100.html">Vectorized Query Engine</a></li>
+    <li>Fast Serializable MVCC: this article</li>
+    <li>Join Ordering Optimization (coming soon)</li>
+    <li>Unnesting Subqueries (coming soon)</li>
+  </ul>
+</blockquote>
+
+<h2 id="what-is-it-about">What is it about?</h2>
+
+<p>This paper proposes an implementation of multiversion concurrency controll (<a href="https://en.wikipedia.org/wiki/Multiversion_concurrency_control">MVCC</a>) which has less overhead and less locking while providing serializability. Most of MVCC implementations out there provide snapshot isolation (<a href="https://en.wikipedia.org/wiki/Snapshot_isolation">SI</a>).</p>
+
+<p>Overall, the approach is to provide the serializable isolation level by checking possible conflicts by the commit times while using snapshots for a transaction to data reads.</p>
+
+<blockquote>
+  <p>Database Isolation Levels: Snapshot vs Serializable</p>
+
+  <p>I compared snapshot isolation level and serializable isolation level <a href="/2023/09/07/snapshot-vs-serializable.html">here</a>.</p>
+
+  <p>Also it seems DuckDB has implemented its MVCC based on the concept of this paper, however without the serializable transaction controls. I haven’t confirmed 100%, but it seems DuckDB provides snapshot isolation level currently, which makes sense to me as its focus is more on OLAP instead of OLTP.</p>
+</blockquote>
+
+<h2 id="storage-locations-of-versions">Storage Locations of Versions</h2>
+
+<ul>
+  <li>
+    <p>Conventional MVCC: scattered versions</p>
+
+    <ul>
+      <li>
+        <p>Older versions are kept, and a background process cleans them when they are obsolete.</p>
+      </li>
+      <li>
+        <p>Storages in DBMS are dynamically allocated: different times of version entries lead to different locations and pages.</p>
+      </li>
+      <li>
+        <p>DBMS creates new versions on different pages to minimize contentition between concurrent transactions.</p>
+      </li>
+      <li>
+        <p>Versions are created after they are logged for recovery. New versions typically get created on separate storage locations so original versions can be preserved for recovery.</p>
+      </li>
+      <li>
+        <p>Data gets fragmented overtime in DBMS because available gaps are utilized by the system: versions are scattered across different locations.</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>Proposed MVCC: centralized versioning management</p>
+
+    <p>The newest data is updated in place and previous versions (before-images) are stored in undo buffers.</p>
+
+    <ul>
+      <li>
+        <p>Reduces the complexity of managing multiple versions scattered across DB.</p>
+      </li>
+      <li>
+        <p>At every successful commit, obsolete versions before this commit time get cleaned up.</p>
+      </li>
+      <li>
+        <p>Helps performance with cache-friendly format.</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<blockquote>
+  <p>The paper does not directly state it, however a good example of scattered versions is PostgreSQL in my opinion.</p>
+
+  <p>PostgreSQL is designed to store versions in its permanent storage for multiple benefits such as simplicity and durability. However this decision brings <a href="https://www.postgresql.org/docs/current/sql-vacuum.html"><code class="language-plaintext highlighter-rouge">VACUUM</code></a> business and a very expensive cost to retrieve accurate counts of records in a large table. Separating the version storage from perpament storage seems to be a good design of providing snapshots of records without complexities.</p>
+</blockquote>
+
+<h2 id="reduced-locking">Reduced Locking</h2>
+
+<ul>
+  <li>
+    <p>Conventional MVCC:</p>
+
+    <ul>
+      <li>
+        <p>Rows might be locked to prevent other transactions from updating them.</p>
+      </li>
+      <li>
+        <p>Locks or similar mechanisms might be used to control visibility of versions.</p>
+      </li>
+      <li>
+        <p>Version list might be locked while being read for stable view of the data.</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>Proposed MVCC:</p>
+
+    <p>Changes happen in place within undo buffers.</p>
+
+    <ul>
+      <li>
+        <p>Precision locking: only the localized areas being updated are locked.</p>
+
+        <p>Changes are confined to small and specific region of memory.</p>
+
+        <ul>
+          <li>
+            <p>Leads to shorter lock hold times.</p>
+          </li>
+          <li>
+            <p>Other transactions can read and update another part of undo buffers.</p>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="selective-checks">Selective Checks</h2>
+
+<ul>
+  <li>
+    <p>Conventional MVCC:</p>
+
+    <ul>
+      <li>
+        <p>Not only committed, but also uncommitted transactions might be checked.</p>
+      </li>
+      <li>
+        <p>Not only modifications, but also reads would be checked in conservative approaches. It is typically to handle scenarios like <a href="https://en.wikipedia.org/wiki/Snapshot_isolation#Definition">write skew anomaly</a>.</p>
+      </li>
+      <li>
+        <p>All the conflict types such as read-write, write-write and even read-read might be checked.</p>
+      </li>
+      <li>
+        <p>Checks of conflicting transactions might happen at global level, which would result in global locking.</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>Proposed MVCC:</p>
+
+    <ul>
+      <li>
+        <p>Only checks committed transactions that could affect the read predicates of ongoing transactions.</p>
+      </li>
+      <li>
+        <p>Defers much of conflict detection until commit time with a more focused scope.</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="efficiant-validation-and-conflict-resolution">Efficiant Validation and Conflict Resolution</h2>
+
+<ul>
+  <li>
+    <p>Conventional MVCC:</p>
+
+    <ul>
+      <li>
+        <p>Might require expensive global locks to ensure serializability</p>
+      </li>
+      <li>
+        <p>Might use timestamps:</p>
+
+        <ul>
+          <li>
+            <p>Atomic operations might be required to ensure uniqueness of timestamps, which leads to wait time.</p>
+          </li>
+          <li>
+            <p>Comparison process can be complex, and the system must validate read and write operations against the timestamps of potentially numerous other transaction.</p>
+          </li>
+          <li>
+            <p>If a transaction with an earlier timestamp has not yet committed, a transaction with a later timestamp might be forced to wait, leading to delay.</p>
+          </li>
+          <li>
+            <p>Rollback process can be expensive because it requires undoing all changes made by the aborted transaction, restoring the previous state, and possibly restarting the transaction.</p>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>Proposed MVCC:</p>
+
+    <ul>
+      <li>
+        <p>Validates serializability by checking conflicts only at commit time.</p>
+      </li>
+      <li>
+        <p>Versions in undo logs are version chains only with delta.</p>
+      </li>
+      <li>
+        <p>Versions in undo logs are indexed by IDs and/or timestamps.</p>
+      </li>
+      <li>
+        <p>Predicates of transactions are logged for fast validation of serializability.</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h1 id="benchmarks">Benchmarks</h1>
+
+<ul>
+  <li>
+    <p>TPC-C: write-heavy benchmark of order entries (8% read and 92% write transactions)</p>
+
+    <ul>
+      <li>
+        <p>Proposed MVCC:</p>
+
+        <ul>
+          <li>
+            <p><code class="language-plaintext highlighter-rouge">100,000 TPS</code> (transactions per second)</p>
+          </li>
+          <li>
+            <p>Performance cost of about 20% compared to single-version concurrency control</p>
+          </li>
+          <li>
+            <p>Scaled linearly up to 20 cores, however beyond that might require reducing global synchronization. <a href="https://wzheng.github.io/silo.pdf">Silo</a> implements this.</p>
+          </li>
+        </ul>
+      </li>
+      <li>
+        <p>2PL (two-phase locking) in HyPer: 5 times slower</p>
+      </li>
+      <li>
+        <p>Conventional MVCC: <code class="language-plaintext highlighter-rouge">50,000 TPS</code></p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>TATP: benchmark of point accesses &amp; whole-record updates (80% read and 20% write transactions), simulating a telecomm app</p>
+
+    <ul>
+      <li>
+        <p>Proposed MVCC: <code class="language-plaintext highlighter-rouge">407,564 TPS</code> shows minimal overhead comparing to single-version control and overperformed conventional MVCC.</p>
+      </li>
+      <li>
+        <p>Single-version control: <code class="language-plaintext highlighter-rouge">421,940 TPS</code></p>
+      </li>
+      <li>
+        <p>Conventional MVCC: <code class="language-plaintext highlighter-rouge">340,715 TPS</code></p>
+      </li>
+    </ul>
+  </li>
+</ul>]]></content><author><name></name></author><summary type="html"><![CDATA[Paper: Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://yohei.codes/assets/images/screenshot.png" /><media:content medium="image" url="https://yohei.codes/assets/images/screenshot.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="en"><title type="html">Paper: MonetDB/X100: Hyper-Pipelining Query Execution</title><link href="https://yohei.codes/2024/08/16/paper-monet-db-x-100.html" rel="alternate" type="text/html" title="Paper: MonetDB/X100: Hyper-Pipelining Query Execution" /><published>2024-08-16T00:00:00+00:00</published><updated>2024-08-16T00:00:00+00:00</updated><id>https://yohei.codes/2024/08/16/paper-monet-db-x-100</id><content type="html" xml:base="https://yohei.codes/2024/08/16/paper-monet-db-x-100.html"><![CDATA[<h1 id="paper-monetdbx100-hyper-pipelining-query-execution">Paper: MonetDB/X100: Hyper-Pipelining Query Execution</h1>
+
+<p>This articles is notes taken from the paper: <a href="http://cidrdb.org/cidr2005/papers/P19.pdf">MonetDB/X100: Hyper-Pipelining Query Execution</a>. It was published in 2005 at <a href="https://www.cidrdb.org/">The Conference on Innovative Data Systems Research (CIDR)</a> Conference.</p>
+
+<blockquote>
+  <h3 id="series-papers-adopted-by-duckdb">Series: Papers adopted by DuckDB</h3>
+
+  <p>DuckDB can handle analytical query workloads incredibly fast. This series is my notes from the publications adopted by DuckDB (listed <a href="https://duckdb.org/why_duckdb.html#standing-on-the-shoulders-of-giants">here</a>).</p>
+
+  <ul>
+    <li>Vectorized Query Engine : this article</li>
+    <li><a href="/2024/08/20/paper-fast-serializable-mvcc.html">Fast Serializable MVCC</a></li>
+    <li>Join Ordering Optimization (coming soon)</li>
+    <li>Unnesting Subqueries (coming soon)</li>
+  </ul>
+
+  <p>Note: though the concept of vectorized query execution model is adopted by DuckDB, the storage model explained in this paper is not the same as DuckDB’s one. Each column data is stored separatly in MonetDB whereas DuckDB storage uses row groups as mentioned <a href="https://duckdb.org/docs/internals/storage.html#row-groups">here</a>.</p>
+</blockquote>
+
+<h2 id="what-is-it-about">What is it about?</h2>
+
+<p>This paper proposes a vectorized query execution model in DBMS for better utilization of modern CPUs, comparing it against traditional volcano iterator model.</p>
+
+<ul>
+  <li>
+    <p>Performance comparision is through TPC-H benchmark: 22 complex SQL queries including large scans, joins, aggregations and nested queries.</p>
+  </li>
+  <li>
+    <p>The paper doesn’t directly mention, but MonetDB is a columnar DB and the comparisons suggest that the mentioned traditional volcano model is assumed to be row-oriented DB.</p>
+  </li>
+</ul>
+
+<h2 id="interpretation-of-query">Interpretation of query</h2>
+
+<ul>
+  <li>
+    <p>Traditional: volcano iterator model = tuple by tuple</p>
+
+    <p>Each tuple must repeated go through various operators like filters, joins and aggregations -&gt; high interpretation overhead &amp; limited opportunities for CPU parallelism.</p>
+  </li>
+  <li>
+    <p>Proposed: vectorized processing</p>
+
+    <p>Applies filter, join and aggregation operations to entire data vectors at once.</p>
+  </li>
+</ul>
+
+<h2 id="cpu-cache-utilization">CPU cache utilization</h2>
+
+<ul>
+  <li>
+    <p>Traditional: entire tuple needs to be loaded into memory, so unused data uses cacheline as well when data is accessed, leading to more frequent cache misses.</p>
+  </li>
+  <li>
+    <p>Proposed: only relevant data is loaded into memory</p>
+
+    <ul>
+      <li>
+        <p>Spacial locality: data of a single column is stored contiguously in memory -&gt; better cache hits &amp; contiguous memory accesses</p>
+      </li>
+      <li>
+        <p>Temporal locality: once data is loaded into cache, it is used repeatedly before the next chunk is loaded.</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<p>Example:</p>
+<ul>
+  <li>
+    <p>Table: <code class="language-plaintext highlighter-rouge">sale_id INT, date DATE, product_id INT, quantity INT, price FLOAT</code></p>
+  </li>
+  <li>
+    <p>Query: <code class="language-plaintext highlighter-rouge">SELECT SUM (quantity * price) AS total_revenue FROM sales;</code></p>
+  </li>
+  <li>
+    <p>Cacheline:</p>
+
+    <ul>
+      <li>
+        <p>Row-oriented: unused columns on cacheline</p>
+
+        <p><code class="language-plaintext highlighter-rouge">[ sale_id | date | product_id | quantity | price | sale_id... ]</code></p>
+      </li>
+      <li>
+        <p>Columnar data: only used data is cached</p>
+
+        <p><code class="language-plaintext highlighter-rouge">[ quantity | quantity | quantity | quantity... ]</code></p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="cpu-pipeline-execution">CPU Pipeline Execution</h2>
+
+<ul>
+  <li>
+    <p>Traditional: tuple-by-tuple &amp; row-oriented</p>
+
+    <ul>
+      <li>
+        <p>CPU stalls while data is loaded due to frequent cache misses as mentioned above.</p>
+      </li>
+      <li>
+        <p>Instructions need to be repeatedly fetched per tuple (No SIMD).</p>
+      </li>
+      <li>
+        <p>Conditions such as <code class="language-plaintext highlighter-rouge">IF</code> or <code class="language-plaintext highlighter-rouge">WHERE</code> per tuple lead to branch mispredictions.</p>
+      </li>
+      <li>
+        <p>Data / control hazards = operation dependencies. Operations need to wait for previous operations to finish before proceeding.</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>Proposed: vectorized processing</p>
+
+    <ul>
+      <li>
+        <p>Less cache misses = less CPU stalls.</p>
+      </li>
+      <li>
+        <p>Vectorized data align well with <a href="https://en.wikipedia.org/wiki/Single_instruction,_multiple_data">SIMD</a> can significantly optimize data processing.</p>
+      </li>
+      <li>
+        <p>Less or no dependency between operations, so CPU pipelines can plan and execute operations effectively.</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="benchmarks">Benchmarks</h2>
+
+<ul>
+  <li>
+    <p>TPC-H Query 1: scan, arithmetic and aggregation operations on a large table. CPU-bound workload without complex operations such as <code class="language-plaintext highlighter-rouge">JOIN</code>.</p>
+
+    <ul>
+      <li>
+        <p>MySQL</p>
+
+        <ul>
+          <li>
+            <p>Execution time: <code class="language-plaintext highlighter-rouge">100 secs</code> which is significantly higher due to inefficiency of tuple-by-tuple processing.</p>
+          </li>
+          <li>
+            <p>Breakdown: 10% for computation, 28% for hash table management for aggregation and 62% copying and navigating through records.</p>
+          </li>
+          <li>
+            <p>Instructions per Cycle (IPC): around 0.8 which is low.</p>
+          </li>
+        </ul>
+      </li>
+      <li>
+        <p>X100</p>
+
+        <ul>
+          <li>
+            <p>Execution time: <code class="language-plaintext highlighter-rouge">20 secs</code> which is significantly lower.</p>
+          </li>
+          <li>
+            <p>Breakdown: computation much larger fraction for computation itself. Operations for hash table and record navigation were minimized.</p>
+          </li>
+          <li>
+            <p>IPC: around 2.0 which is higher compared to MySQL.</p>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="notes-on-monet-db">Notes on Monet DB</h2>
+
+<ul>
+  <li>
+    <p>Vertical Fragmentation: each column is store as a Binary Association Table (BAT), containing <code class="language-plaintext highlighter-rouge">[object_id, value]</code></p>
+
+    <ul>
+      <li>
+        <p>Deletes: Marked by adding tuple IDs to a deletion list.</p>
+      </li>
+      <li>
+        <p>Inserts: Handled by appending to separate delta columns.</p>
+      </li>
+      <li>
+        <p>Updates: Implemented as a combination of a delete and an insert.</p>
+      </li>
+      <li>
+        <p>Reorganization: when delta columns exceeds a small percentage of total table size, the delta is merged with the main storage.</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>Arrays of column data are passed as <code class="language-plaintext highlighter-rouge">restrict</code> pointers so C compiler would generate loop-pipelining, which is optimized processing of array data.</p>
+  </li>
+  <li>
+    <p><code class="language-plaintext highlighter-rouge">GROUP BY</code> is optimized with bit-representations used directly as indices in an array of aggregation results.</p>
+  </li>
+</ul>]]></content><author><name></name></author><summary type="html"><![CDATA[Paper: MonetDB/X100: Hyper-Pipelining Query Execution]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://yohei.codes/assets/images/screenshot.png" /><media:content medium="image" url="https://yohei.codes/assets/images/screenshot.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="en"><title type="html">Papers Adopted by DuckDB</title><link href="https://yohei.codes/2024/08/15/duckdb-papers.html" rel="alternate" type="text/html" title="Papers Adopted by DuckDB" /><published>2024-08-15T00:00:00+00:00</published><updated>2024-08-15T00:00:00+00:00</updated><id>https://yohei.codes/2024/08/15/duckdb-papers</id><content type="html" xml:base="https://yohei.codes/2024/08/15/duckdb-papers.html"><![CDATA[<h1 id="papers-adopted-by-duckdb">Papers Adopted by DuckDB</h1>
+
+<p><a href="https://duckdb.org/">DuckDB</a> can handle analytical query workloads incredibly fast.</p>
+
+<p>On its official documentation page, there’s a list named <a href="https://duckdb.org/why_duckdb.html#standing-on-the-shoulders-of-giants">“Standing on the Shoulders of Giants”</a>, and I’ve gone through some of them for my understanding of DuckDB itself and DB internals in general.</p>
+
+<p>This series is my notes from them. Please feel free to ping me for anything you think I should add or read wrong.</p>
+
+<blockquote>
+  <h3 id="list-of-articles">List of Articles</h3>
+  <ul>
+    <li><a href="/2024/08/16/paper-monet-db-x-100.html">Vectorized Query Engine (MonetDB/X100: Hyper-Pipelining Query Execution)</a></li>
+    <li><a href="/2024/08/20/paper-fast-serializable-mvcc.html">Fast Serializable MVCC</a></li>
+    <li>Join Ordering Optimization (coming soon)</li>
+    <li>Unnesting Subqueries (coming soon)</li>
+  </ul>
+</blockquote>]]></content><author><name></name></author><summary type="html"><![CDATA[Papers Adopted by DuckDB]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://yohei.codes/assets/images/screenshot.png" /><media:content medium="image" url="https://yohei.codes/assets/images/screenshot.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="en"><title type="html">DB Isolation Levels: Snapshot vs Serializable</title><link href="https://yohei.codes/2023/09/07/snapshot-vs-serializable.html" rel="alternate" type="text/html" title="DB Isolation Levels: Snapshot vs Serializable" /><published>2023-09-07T00:00:00+00:00</published><updated>2023-09-07T00:00:00+00:00</updated><id>https://yohei.codes/2023/09/07/snapshot-vs-serializable</id><content type="html" xml:base="https://yohei.codes/2023/09/07/snapshot-vs-serializable.html"><![CDATA[<h1 id="database-isolation-levels-snapshot-vs-serializable">Database Isolation Levels: Snapshot vs Serializable</h1>
+
+<p>This page is an article based on notes I took while researching database isolation levels. Here, I focus on the differences between the snapshot isolation level and the serializable isolation level.</p>
+
+<h2 id="write-skew-anomaly">Write Skew Anomaly</h2>
+
+<p>A common scenario to compare snapshot isolation level and serializable isolation level is the write skew anomaly. In the snapshot isolation level model, this scenario is fundamentally not handled. This is because the conflict detection in snapshot isolation only targets changes to the same record and does not account for the order of the commit sequence, which is a design choice made for performance reasons. Below is the scenario:</p>
+
+<ul>
+  <li>
+    <p>Transaction to update on-call doctors</p>
+
+    <ul>
+      <li>
+        <p>The system needs to ensure that there is at least one doctor on call at all times.</p>
+      </li>
+      <li>
+        <p>T1 (Transaction 1) wants to cancel Doctor A’s on-call duty if there is another doctor on call.</p>
+      </li>
+      <li>
+        <p>T2 wants to cancel Doctor B’s on-call duty if there is another doctor on call.</p>
+      </li>
+      <li>
+        <p>T1 and T2 occur at overlapping times in the timeline.</p>
+      </li>
+    </ul>
+
+    <p>Transaction sequence:</p>
+
+    <ol>
+      <li>
+        <p>T1 reads from the DB snapshot that both Doctor A and Doctor B are on call.</p>
+      </li>
+      <li>
+        <p>T2 reads from the DB snapshot that both Doctor A and Doctor B are on call.</p>
+      </li>
+      <li>
+        <p>T1 performs the update to cancel Doctor A’s on-call duty (successful).</p>
+      </li>
+      <li>
+        <p>T2 performs the update to cancel Doctor B’s on-call duty (successful).</p>
+      </li>
+      <li>
+        <p>As a result, the system fails to ensure that at least one doctor is on call, violating the requirement.</p>
+      </li>
+    </ol>
+  </li>
+</ul>
+
+<p>In a serializable isolation level, to ensure the sequential integrity of transactions, only one of T1 or T2 (whichever started first) will succeed, and the other transaction will either roll back and retry, be blocked until the first transaction finishes and then retry, or fail. This example involves a type of conflict known as a read-write conflict.</p>
+
+<p>Of course, implementing a lock is one way for developers to resolve this issue. For example, <code class="language-plaintext highlighter-rouge">SELECT FOR UPDATE</code> locks the data read by the ongoing transaction so that it cannot be read by other transactions until the transaction is complete. In the example above, once T1 reads the on-call data for Doctors A and B, T2 would not be able to read that data until T1 completes. This ensures that when T2 completes its read, T1 has already committed, allowing T2 to see that Doctor A’s on-call duty has been canceled and to make an informed decision about whether to cancel Doctor B’s on-call duty. In major databases, the default isolation level is typically <code class="language-plaintext highlighter-rouge">READ COMMITTED</code> or <code class="language-plaintext highlighter-rouge">REPEATABLE READ</code>, so unless transactions are implemented with proper locking there’ll always be a possibility of write skew. Its practical impact follows the next section.</p>
+
+<h2 id="practical-impact">Practical Impact</h2>
+
+<p><a href="https://en.wikipedia.org/wiki/Snapshot_isolation#Definition">The example from Wikipedia</a> illustrates a scenario where bank transactions could potentially allow a customer to withdraw more than their balance by performing simultaneous withdrawal transactions across multiple accounts. The scenario assumes that a customer has multiple accounts and is allowed to overdraw individual accounts as long as the total balance is non-negative. While this may seem like a theoretical example, it is plausible when considering the real-world user experience during withdrawals. For instance, if an account holder initiates simultaneous transactions to withdraw <code class="language-plaintext highlighter-rouge">$200</code> from two accounts, each with a balance of <code class="language-plaintext highlighter-rouge">$100</code>, the snapshot isolation level database may allow both transactions to succeed, resulting in a total balance of <code class="language-plaintext highlighter-rouge">-$200</code>.</p>
+
+<p>Though these examples might appear theoretical, real-world cases of such attacks have been reported. According to a paper by members of Stanford InfoLab, “<a href="http://www.bailis.org/papers/acidrain-sigmod2017.pdf">ACIDRain: Concurrency-Related Attacks on Database-Backed Web Applications</a>,” there have been reports of data corruption severe enough to bankrupt a Bitcoin exchange, excessive usage of gift cards on e-commerce sites, and the collapse of product inventory data.</p>]]></content><author><name></name></author><summary type="html"><![CDATA[Database Isolation Levels: Snapshot vs Serializable]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://yohei.codes/assets/images/screenshot.png" /><media:content medium="image" url="https://yohei.codes/assets/images/screenshot.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="en"><title type="html">Thread, clone, futex and CMPXCHG</title><link href="https://yohei.codes/2023/05/21/thread-clone-futex.html" rel="alternate" type="text/html" title="Thread, clone, futex and CMPXCHG" /><published>2023-05-21T00:00:00+00:00</published><updated>2023-05-21T00:00:00+00:00</updated><id>https://yohei.codes/2023/05/21/thread-clone-futex</id><content type="html" xml:base="https://yohei.codes/2023/05/21/thread-clone-futex.html"><![CDATA[<h1 id="thread-clone-futex-and-cmpxchg">Thread, clone, futex and CMPXCHG</h1>
+
+<p>This is a page compiled from my notes I’ve taken on thread(pthread)-related topics sporadically over time. It’s my effort to sort out understanding and remember by putting them together.</p>
+
+<h2 id="pthread-internals">pthread Internals</h2>
+
+<p><a href="https://man7.org/linux/man-pages/man7/pthreads.7.html">pthreads</a> calls <a href="https://man7.org/linux/man-pages/man2/clone.2.html"><code class="language-plaintext highlighter-rouge">clone()</code></a>. It creates a <code class="language-plaintext highlighter-rouge">task_struct</code>.</p>
+
+<blockquote>
+  <p>Notes:</p>
+
+  <ul>
+    <li>
+      <p>pthread (POSIX threads) is part of libc. Most of Linux have it implemented by glibc (GNU C Library).</p>
+    </li>
+    <li>
+      <p>Implemented in user space, and interacts with kernel through system calls like <code class="language-plaintext highlighter-rouge">clone()</code> and <a href="https://man7.org/linux/man-pages/man2/futex.2.html"><code class="language-plaintext highlighter-rouge">futex</code></a>.</p>
+    </li>
+    <li>
+      <p><a href="https://man7.org/linux/man-pages/man2/fork.2.html"><code class="language-plaintext highlighter-rouge">fork()</code></a> (libc) also calls <code class="language-plaintext highlighter-rouge">clone()</code> but with different params.</p>
+    </li>
+  </ul>
+</blockquote>
+
+<ul>
+  <li>
+    <p><code class="language-plaintext highlighter-rouge">clone()</code> has different flags like these:</p>
+
+    <ul>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_VM</code>: memory space (<code class="language-plaintext highlighter-rouge">fork()</code> does not share memory space)</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_FS</code>: file system</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_FILES</code>: file descriptors</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_SIGHAND</code>: signal handlers</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_THREAD</code>: threads</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_PARENT_SETTID</code>:</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_CHILD_CLEARTID</code>:</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<blockquote>
+  <p>Notes: libc vs kernel system call</p>
+
+  <p>Standard interface for kernel system calls is libc for portability and safety. Technically <code class="language-plaintext highlighter-rouge">man 2 [name]</code> describes kernel system call and <code class="language-plaintext highlighter-rouge">man 3 [name]</code> describes libc function, however even <code class="language-plaintext highlighter-rouge">man 2</code> displays lib in library section.</p>
+
+  <p>To find out if a libc function is just a wrapper or has more logics on top of system calls, we need to find out internals / knowledge of the function. But if a function only exists in <code class="language-plaintext highlighter-rouge">man 3</code> then it’s obvious that the function has custom logics wrapping system calls in libc.</p>
+</blockquote>
+
+<h2 id="kernel-perspective">Kernel Perspective</h2>
+
+<p>Both processes and threads are represented as <code class="language-plaintext highlighter-rouge">task_struct</code> in kernel.</p>
+
+<ul>
+  <li>
+    <p>Scheduling: unified task scheduling</p>
+
+    <p>Kernel doesn’t schedule processes and threads diffently though it knows about shared address spaces and resources for threads.</p>
+
+    <ul>
+      <li>
+        <p>Preemptive multitasking: OS can interrupt and switch between threads. (OS uses hardware timer interrupts.)</p>
+      </li>
+      <li>
+        <p>Criterion of multitasking:</p>
+
+        <ul>
+          <li>
+            <p>Time slice (quantum)</p>
+          </li>
+          <li>
+            <p>I/O operation</p>
+          </li>
+          <li>
+            <p>Priority</p>
+          </li>
+        </ul>
+      </li>
+      <li>
+        <p>Completely fair scheduler (CFS) is default. Other policies for real-time: <code class="language-plaintext highlighter-rouge">SCHED_FIFO</code> and <code class="language-plaintext highlighter-rouge">SCHED_RR</code> exist as well.</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>Thread states (registers, program counter and stack pointer etc) are saved as <code class="language-plaintext highlighter-rouge">Thread Control Block (TCB)</code> while process states are saved as <code class="language-plaintext highlighter-rouge">Process Control Block (PCB)</code>.</p>
+  </li>
+  <li>
+    <p>Difference between threads vs processes:</p>
+
+    <ul>
+      <li>
+        <p>Threads’ <code class="language-plaintext highlighter-rouge">task_struct</code> would be a part of a thread group of a process.</p>
+      </li>
+      <li>
+        <p>Threads’ structs point to shared resources.</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="controlling-kernel-schedule">Controlling Kernel Schedule</h2>
+
+<ul>
+  <li>
+    <p>CPU affinity: determines which CPU core a thread / process can run.</p>
+
+    <p>Binds threads to specific core, reducing context switching and improving cache utilization.</p>
+
+    <ul>
+      <li>
+        <p><a href="https://man7.org/linux/man-pages/man2/sched_setaffinity.2.html"><code class="language-plaintext highlighter-rouge">sched_setaffinity(pid, cpusetsize, mask)</code></a></p>
+      </li>
+      <li>
+        <p><a href="https://linux.die.net/man/2/sched_getaffinity"><code class="language-plaintext highlighter-rouge">sched_getaffinity(pid, cpusetsize, mask)</code></a></p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>Policy: different policies can be set.</p>
+
+    <p><a href="https://man7.org/linux/man-pages/man2/sched_setscheduler.2.html"><code class="language-plaintext highlighter-rouge">sched_setscheduler(pid, policy, param)</code></a> and <code class="language-plaintext highlighter-rouge">sched_getscheduler(pid)</code></p>
+
+    <ul>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">SCHED_OTHER</code>: default Linux time-sharing scheduler</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">SCHED_FIFO</code>: first-in, first-out real-time scheduling</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">SCHED_RR</code>: round-robin real-time scheduling</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">SCHED_IDLE</code>: very low priority for background tasks</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">SCHED_BATCH</code>: suitable for batch processing jobs</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>Priority: priority can be set as well.</p>
+
+    <p><a href="https://linux.die.net/man/2/setpriority"><code class="language-plaintext highlighter-rouge">setpriority(which, who, priority)</code></a> and <code class="language-plaintext highlighter-rouge">getpriority(which, who)</code></p>
+
+    <ul>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">type</code>: such as <code class="language-plaintext highlighter-rouge">PRIO_PROCESS</code></p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">who</code>: identifier</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">priority</code>: new priority value</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>Command:</p>
+
+    <p><code class="language-plaintext highlighter-rouge">nice</code> and <code class="language-plaintext highlighter-rouge">renice</code> modify priority.</p>
+
+    <ul>
+      <li>Value ranges from <code class="language-plaintext highlighter-rouge">-20</code> (highest) to <code class="language-plaintext highlighter-rouge">19</code> (lowest)</li>
+    </ul>
+  </li>
+  <li>
+    <p>pthread:</p>
+
+    <ul>
+      <li>
+        <p><a href="https://man7.org/linux/man-pages/man3/pthread_setschedparam.3.html"><code class="language-plaintext highlighter-rouge">pthread_setschedparam</code></a> and <code class="language-plaintext highlighter-rouge">pthread_getschedparam</code>: scheduling policy and params</p>
+      </li>
+      <li>
+        <p><a href="https://man7.org/linux/man-pages/man3/pthread_attr_setschedpolicy.3.html"><code class="language-plaintext highlighter-rouge">pthread_attr_setschedpolicy</code></a> and <code class="language-plaintext highlighter-rouge">pthread_attr_setschedparam</code>: thread attributes</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="user-level-threading">User-level Threading</h2>
+
+<ul>
+  <li>
+    <p>Coroutines: functions that can suspend execution and resume later. Common in Python (async/await), Kotlin and Lua.</p>
+  </li>
+  <li>
+    <p>Fibers: similar to coroutines but often more general-purpose. Ruby and C++ have it.</p>
+  </li>
+  <li>
+    <p><code class="language-plaintext highlighter-rouge">m:n</code> threading: <code class="language-plaintext highlighter-rouge">m</code> user-level threads mapped to fewer <code class="language-plaintext highlighter-rouge">n</code> kernel threads.</p>
+
+    <ul>
+      <li>
+        <p>Advantages: flexible / can adjust <code class="language-plaintext highlighter-rouge">n</code> / no context switches / can handle blocking operations</p>
+      </li>
+      <li>
+        <p>Disadvantages: complexity / debugging / limited OS support (Linux and Windows use <code class="language-plaintext highlighter-rouge">1:1</code> threading model)</p>
+      </li>
+      <li>
+        <p>OS level: mostly <code class="language-plaintext highlighter-rouge">1:1</code> for simplicity (Old Solaris and GNU Portable Threads provide <code class="language-plaintext highlighter-rouge">m:n</code> mapping)</p>
+      </li>
+      <li>
+        <p>Examples:</p>
+
+        <ul>
+          <li>
+            <p>Go: <code class="language-plaintext highlighter-rouge">goroutines</code> are scheduled onto a smaller number of OS threads.</p>
+          </li>
+          <li>
+            <p>Erlang: through BEAM virtual machine, lightweight processes are scheduled onto a smaller number of OS threads.</p>
+          </li>
+          <li>
+            <p>NodeJS: not conventional, but multiple tasks are handled concurrently with a small number of threads through event loop (event-driven architecture).</p>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<blockquote>
+  <p>Languages without <code class="language-plaintext highlighter-rouge">m:n</code></p>
+
+  <p>Languages like Java or Rust provide provide an interface to kernel threads with <code class="language-plaintext highlighter-rouge">1:1</code> mapping as a language feature instead of providing <code class="language-plaintext highlighter-rouge">m:n</code> or green thread model.</p>
+
+  <p>In those language, <code class="language-plaintext highlighter-rouge">m:n</code>, green thread or fiber model of multithreading are typically implemented as libraries outside of language features / designs.</p>
+</blockquote>
+
+<h2 id="synchronization-mechanisms">Synchronization Mechanisms</h2>
+
+<p>With multiple threads, contentions need to be handled. pthread provides synchronized primitives such as <code class="language-plaintext highlighter-rouge">mutex</code>, <code class="language-plaintext highlighter-rouge">condition variable</code> and <code class="language-plaintext highlighter-rouge">semaphore</code>.</p>
+
+<ul>
+  <li>
+    <p><strong>Mutex</strong> (<code class="language-plaintext highlighter-rouge">pthread_mutex_t</code>): only one thread can access a critical section of code at a time.</p>
+
+    <ul>
+      <li>
+        <p>Uses <code class="language-plaintext highlighter-rouge">futex</code>.</p>
+      </li>
+      <li>
+        <p>Has ownership: only lock owner thread can update.</p>
+      </li>
+      <li>
+        <p>Implementation: internal state (The kernel or operating system provides mechanisms to block and wake up threads.)</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p><strong>Condition variable</strong> (<code class="language-plaintext highlighter-rouge">pthread_cond_t</code>): blocks a thread until a particular condition is met, usually in combination with a mutex.</p>
+
+    <ul>
+      <li>It releases the associated mutex and uses <code class="language-plaintext highlighter-rouge">futex</code> to wait for a signal or broadcast from another thread.</li>
+    </ul>
+  </li>
+  <li>
+    <p><strong>Semaphore</strong> (<code class="language-plaintext highlighter-rouge">sem_t</code>): controls access to a shared resource.</p>
+
+    <ul>
+      <li>
+        <p>Similar to mutexes, when the semaphore count is zero and a thread tries to decrement it, the thread uses <code class="language-plaintext highlighter-rouge">futex</code> to wait. When the count is incremented, <code class="language-plaintext highlighter-rouge">futex</code> is used to wake up one of the waiting threads.</p>
+      </li>
+      <li>
+        <p>No ownership: any thread can update the value.</p>
+      </li>
+      <li>
+        <p>Use case: resource pool like DB connection pool / producer-consumer availability</p>
+      </li>
+      <li>
+        <p>Implementation: counter + wait queue</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="futex">Futex</h2>
+
+<p>Stands for “fast userspace mutex.” Only when contention occurs futex interacts with the kernel.</p>
+
+<blockquote>
+  <p>Notes:</p>
+
+  <p>It might seem like <code class="language-plaintext highlighter-rouge">futex</code> is not part of the kernel at first glance as it is designed to minimize kernel involvement in typical use cases, but it is a kernel construct.</p>
+</blockquote>
+
+<ul>
+  <li>
+    <p>Fast path: mutex is free → lock acquired (only in userspace)</p>
+  </li>
+  <li>
+    <p>Slow path: mutex is not free → thread makes a system call, and the kernel puts a thread to sleep until the mutex is unlocked.</p>
+  </li>
+  <li>
+    <p><code class="language-plaintext highlighter-rouge">futex</code> provides a mechanism to put threads to sleep and wake them up efficiently, with the kernel managing the wait queues.</p>
+
+    <ul>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">futex_wait</code>: A thread calls this to indicate that it is waiting on a futex variable (typically a specific memory location). The kernel puts the thread to sleep if the condition is not met (e.g., a lock is already held).</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">futex_wake</code>: used to wake one or more threads waiting on a futex variable. When a lock is released or a condition changes, futex_wake can be used to notify the waiting threads, allowing them to continue execution.</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>Compare-and-swap (CAS): atomic operation used for lock acquiring.</p>
+
+    <ul>
+      <li>
+        <p>X86/64: <code class="language-plaintext highlighter-rouge">CMPXCHG destination, source</code> with <code class="language-plaintext highlighter-rouge">EAX</code>, <code class="language-plaintext highlighter-rouge">EBX</code>, <code class="language-plaintext highlighter-rouge">ECX</code>, etc. (General-purpose registers) or <code class="language-plaintext highlighter-rouge">RAX</code>, <code class="language-plaintext highlighter-rouge">RBX</code>, <code class="language-plaintext highlighter-rouge">RCX</code>, etc. (64-bit general-purpose registers)</p>
+      </li>
+      <li>
+        <p>Arm: <code class="language-plaintext highlighter-rouge">LDREX</code> (load exclusive) and <code class="language-plaintext highlighter-rouge">STREX</code> (store exclusive) with General-purpose registers (e.g., <code class="language-plaintext highlighter-rouge">r0</code>, <code class="language-plaintext highlighter-rouge">r1</code>, etc.)</p>
+
+        <pre><code class="language-asm">  LDREX r0, [address]      ; Load the value at 'address' into 'r0'
+  CMP r0, old_value        ; Compare the loaded value with 'old_value'
+  STREXEQ r1, new_value, [address] ; If equal, store 'new_value' into 'address'  atomically
+</code></pre>
+      </li>
+    </ul>
+  </li>
+</ul>]]></content><author><name></name></author><summary type="html"><![CDATA[Thread, clone, futex and CMPXCHG]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://yohei.codes/assets/images/screenshot.png" /><media:content medium="image" url="https://yohei.codes/assets/images/screenshot.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="en"><title type="html">DP for String Metrics: Regular Expression</title><link href="https://yohei.codes/2023/02/06/dp-regex.html" rel="alternate" type="text/html" title="DP for String Metrics: Regular Expression" /><published>2023-02-06T00:00:00+00:00</published><updated>2023-02-06T00:00:00+00:00</updated><id>https://yohei.codes/2023/02/06/dp-regex</id><content type="html" xml:base="https://yohei.codes/2023/02/06/dp-regex.html"><![CDATA[<h1 id="dp-for-string-metrics-regular-expression">DP for String Metrics: Regular Expression</h1>
+
+<p>This articles is about regular expression in a series of articles: <a href="#series-dp-for-string-metrics">DP for String Metrics</a>.</p>
+
+<blockquote>
+  <h3 id="series-dp-for-string-metrics">Series: DP for String Metrics</h3>
+
+  <p>Dynamic programming (DP) solves a complicate problem in <a href="https://en.wikipedia.org/wiki/Optimal_substructure">optimal substructure</a> by breaking it down into simpler sub-problems, and there are DP patterns that are very effective for string metrics. These articles are my summary notes on them. Please feel free to ping me for anything you think I should add.</p>
+
+  <ul>
+    <li><a href="/2023/02/03/dp-levenshtein.html">Levenshtein Distance</a></li>
+    <li><a href="/2023/02/05/dp-lcs.html">Longest Common Subsequence</a></li>
+    <li>Regular Expression: this article</li>
+    <li>Distinct Subsequence (coming soon)</li>
+    <li>Longest Repeating Subsequence (coming soon)</li>
+    <li>Hamming Distance (coming soon)</li>
+  </ul>
+</blockquote>
+
+<h2 id="regular-expression-with-dp">Regular Expression with DP</h2>
+
+<p>This is a problem to check regular expression matching with dynamic programming. It’s actually a simplified regex with limited patterns including <code class="language-plaintext highlighter-rouge">.</code> , <code class="language-plaintext highlighter-rouge">*</code> and <code class="language-plaintext highlighter-rouge">characters</code> only. Real implementations of regular expression support more syntaxes and they are more complicated.</p>
+
+<p>Following is the explanation of symbols:</p>
+
+<ul>
+  <li>character = literal match</li>
+  <li><code class="language-plaintext highlighter-rouge">.</code> = any character</li>
+  <li><code class="language-plaintext highlighter-rouge">*</code> = 0 or more of preceding expression (<code class="language-plaintext highlighter-rouge">+</code> is 1 or more and <code class="language-plaintext highlighter-rouge">?</code> is 0 or 1)</li>
+</ul>
+
+<p>Literal character matching needs characters to be in an exact position and order. For example, a pattern of <code class="language-plaintext highlighter-rouge">abc</code> without any metacharacter matches only with <code class="language-plaintext highlighter-rouge">abc</code>. The metacharacter of <code class="language-plaintext highlighter-rouge">.</code> matches with any character, which seems straightforward. The metacharacter of <code class="language-plaintext highlighter-rouge">*</code> is a little tricky here. It matches with repeated occurrence of previous expression, but it also accepts 0 occurence. For example, having <code class="language-plaintext highlighter-rouge">abcccd</code>, a pattern of <code class="language-plaintext highlighter-rouge">abc*d</code> is a match, but <code class="language-plaintext highlighter-rouge">abc*de*</code> is also a match since <code class="language-plaintext highlighter-rouge">e*</code> means <code class="language-plaintext highlighter-rouge">e</code> can exist 0 time as well.</p>
+
+<h3 id="dp-table">DP Table</h3>
+
+<p>In the table below, “abcccd” (vertically mapped on left) is the string to be checked with the pattern, “a.c*de*” (mapped horizontally on top). We define base cases to be empty character, so only <code class="language-plaintext highlighter-rouge">[0, 0]</code> is true for the character match and the rest of cells in the first row &amp; column are all false.</p>
+
+<p>We go through each cell from position <code class="language-plaintext highlighter-rouge">[1, 1]</code> to right every row, comparing each character against a pattern character. When the two characters match, the cell is updated with the value from above and left. The same goes when a pattern character is <code class="language-plaintext highlighter-rouge">.</code> since it matches with any character. This chain of bool values from top left to bottom right is the basis of this DP to judge if a pattern match happens or not. A pattern character of <code class="language-plaintext highlighter-rouge">*</code> requires checks of different angles. Firstly we need to bring a DP value of 2 cells left from a current cell. This is because <code class="language-plaintext highlighter-rouge">*</code> character accepts 0 occurrence of previous character. This update actually serves for actual occurrence of the previous character as well. When an actual sequence of a previous character happens, we update the current cell from one above, which would make the current cell true only when there’s a match before a sequential pattern such as <code class="language-plaintext highlighter-rouge">c*</code> starts. Finally we get the result at the last cell.</p>
+
+<p><img src="/assets/images/dp-regex.png" style="background-color: #FFF;" />
+<!-- ![dp-regex-table](/image/dp-regex.png) --></p>
+
+<p>Before closing DP table explanation, there’s an edge case we need to handle actually. When a pattern has only sequential matches like <code class="language-plaintext highlighter-rouge">a*</code> or <code class="language-plaintext highlighter-rouge">a*b*c*</code> for example, we would not get the true value we vertically copied in the above case. So what we need is that 0 occurrence check we did in the example on the first row before starting DP table updates. This can be found in implementation below.</p>
+
+<h3 id="implementation">Implementation</h3>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">regex</span><span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="n">pattern</span><span class="p">):</span>
+    <span class="n">slen</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="n">plen</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">pattern</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="n">dp</span> <span class="o">=</span> <span class="p">[[</span><span class="bp">False</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">plen</span><span class="p">)]</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">slen</span><span class="p">)]</span>
+    <span class="n">dp</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="bp">True</span>
+
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">plen</span><span class="p">):</span>  <span class="c1"># handles sequential pattern in the first row
+</span>        <span class="k">if</span> <span class="n">pattern</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s">'*'</span><span class="p">:</span>
+            <span class="n">dp</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">dp</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="n">i</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span>
+
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">slen</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">plen</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">pattern</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s">'.'</span> <span class="ow">or</span> <span class="n">pattern</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="n">s</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]:</span>  <span class="c1"># '.' or char match
+</span>                <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>  <span class="c1"># diagnal update
+</span>            <span class="k">elif</span> <span class="n">pattern</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s">'*'</span><span class="p">:</span>  <span class="c1"># sequence pattern
+</span>                <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span>  <span class="c1"># update for 0 occurence
+</span>                <span class="k">if</span> <span class="n">pattern</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span> <span class="o">==</span> <span class="s">'.'</span> <span class="ow">or</span> <span class="n">pattern</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span> <span class="o">==</span> <span class="n">s</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]:</span>  <span class="c1"># match before sequence pattern
+</span>                    <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="p">]</span>  <span class="c1"># vertical update
+</span>
+    <span class="k">return</span> <span class="n">dp</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+</code></pre></div></div>]]></content><author><name></name></author><summary type="html"><![CDATA[DP for String Metrics: Regular Expression]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://yohei.codes/assets/images/dp-regex.png" /><media:content medium="image" url="https://yohei.codes/assets/images/dp-regex.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="en"><title type="html">DP for String Metrics: Longest Common Subsequence</title><link href="https://yohei.codes/2023/02/05/dp-lcs.html" rel="alternate" type="text/html" title="DP for String Metrics: Longest Common Subsequence" /><published>2023-02-05T00:00:00+00:00</published><updated>2023-02-05T00:00:00+00:00</updated><id>https://yohei.codes/2023/02/05/dp-lcs</id><content type="html" xml:base="https://yohei.codes/2023/02/05/dp-lcs.html"><![CDATA[<h1 id="dp-for-string-metrics-longest-common-subsequence">DP for String Metrics: Longest Common Subsequence</h1>
+
+<p>This articles is about longest common subsequence in a series of articles: <a href="#series-dp-for-string-metrics">DP for String Metrics</a>.</p>
+
+<blockquote>
+  <h3 id="series-dp-for-string-metrics">Series: DP for String Metrics</h3>
+
+  <p>Dynamic programming (DP) solves a complicate problem in <a href="https://en.wikipedia.org/wiki/Optimal_substructure">optimal substructure</a> by breaking it down into simpler sub-problems, and there are DP patterns that are very effective for string metrics. These articles are my summary notes on them. Please feel free to ping me for anything you think I should add.</p>
+
+  <ul>
+    <li><a href="/2023/02/03/dp-levenshtein.html">Levenshtein Distance</a></li>
+    <li>Longest Common Subsequence: this article</li>
+    <li><a href="/2023/02/06/dp-regex.html">Regular Expression</a></li>
+    <li>Distinct Subsequence (coming soon)</li>
+    <li>Longest Repeating Subsequence (coming soon)</li>
+    <li>Hamming Distance (coming soon)</li>
+  </ul>
+</blockquote>
+
+<h2 id="longest-common-subsequence">Longest Common Subsequence</h2>
+
+<p>Longest common sequence (LCS) is used for things like fuzzy string searches and <code class="language-plaintext highlighter-rouge">diff</code> command. It finds the longest sequence common in (typically) two strings where the common sequence doesn’t need to happen consecutively. E.g. LCS between <code class="language-plaintext highlighter-rouge">ABCD</code> and <code class="language-plaintext highlighter-rouge">ACBD</code> is <code class="language-plaintext highlighter-rouge">3</code> (either <code class="language-plaintext highlighter-rouge">ABD</code> or <code class="language-plaintext highlighter-rouge">ACD</code>.)</p>
+
+<h3 id="dp-table">DP Table</h3>
+
+<p>In the table below, “stone” (vertically mapped on left) and “longest” (mapped horizontally on top) are compared. In LCS, we define base cases to be non-character (expressed as <code class="language-plaintext highlighter-rouge">ε</code>), so values of the first row and column are all zero.</p>
+
+<p>We go through each cell from position <code class="language-plaintext highlighter-rouge">[1, 1]</code> to right every row, comparing each character of two strings. If the characters are identical, we increment a number from left and above by one and update the cell with it. If not, we use the best value up until this point, which is the larger one of either top or left cell. Finally, the cell at the end would be the result count.</p>
+
+<p><img src="/assets/images/lcs.png" style="background-color: #FFF;" />
+<!-- ![lcs](/image/lcs.png) --></p>
+
+<h3 id="implementation">Implementation</h3>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">lcs</span><span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="n">target</span><span class="p">):</span>
+    <span class="n">slen</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>  <span class="c1"># +1 for empty string
+</span>    <span class="n">tlen</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">target</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="n">dp</span> <span class="o">=</span> <span class="p">[[</span><span class="mi">0</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">tlen</span><span class="p">)]</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">slen</span><span class="p">)]</span>  <span class="c1"># DP table creation
+</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">slen</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">tlen</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">s</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="n">target</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]:</span>  <span class="c1"># if characters are identical, increment number from left top
+</span>                <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="mi">1</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="p">],</span> <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>  <span class="c1"># if not, use best value either from top of left
+</span>
+    <span class="k">return</span> <span class="n">dp</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+</code></pre></div></div>
+
+<h3 id="notes">Notes</h3>
+
+<p>LCS only returns metrics. So if LCS sequence itself is desired instead of metric, we would need another function to retrieve the characters. This can be achieved by using the DP table created in LCS function, tracking the largest numbers from the end and collecting the characters.</p>]]></content><author><name></name></author><summary type="html"><![CDATA[DP for String Metrics: Longest Common Subsequence]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://yohei.codes/assets/images/lcs.png" /><media:content medium="image" url="https://yohei.codes/assets/images/lcs.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="en"><title type="html">DP for String Metrics: Levenstein Distance</title><link href="https://yohei.codes/2023/02/03/dp-levenshtein.html" rel="alternate" type="text/html" title="DP for String Metrics: Levenstein Distance" /><published>2023-02-03T00:00:00+00:00</published><updated>2023-02-03T00:00:00+00:00</updated><id>https://yohei.codes/2023/02/03/dp-levenshtein</id><content type="html" xml:base="https://yohei.codes/2023/02/03/dp-levenshtein.html"><![CDATA[<h1 id="dp-for-string-metrics-levenstein-distance">DP for String Metrics: Levenstein Distance</h1>
+
+<p>This articles is about Levenshtein Distance in a series of articles: <a href="#series-dp-for-string-metrics">DP for String Metrics</a>.</p>
+
+<blockquote>
+  <h3 id="series-dp-for-string-metrics">Series: DP for String Metrics</h3>
+
+  <p>Dynamic programming (DP) solves a complicate problem in <a href="https://en.wikipedia.org/wiki/Optimal_substructure">optimal substructure</a> by breaking it down into simpler sub-problems, and there are DP patterns that are very effective for string metrics. These articles are my summary notes on them. Please feel free to ping me for anything you think I should add.</p>
+
+  <ul>
+    <li>Levenshtein Distance: this article</li>
+    <li><a href="/2023/02/05/dp-lcs.html">Longest Common Subsequence</a></li>
+    <li><a href="/2023/02/06/dp-regex.html">Regular Expression</a></li>
+    <li>Distinct Subsequence (coming soon)</li>
+    <li>Longest Repeating Subsequence (coming soon)</li>
+    <li>Hamming Distance (coming soon)</li>
+  </ul>
+</blockquote>
+
+<h2 id="levenshtein-distance">Levenshtein Distance</h2>
+
+<p>This metric can be useful to things like spell checking or fuzzy string searches. It gives answers to the situation below:</p>
+
+<p>    <em>There are a subject string A and a target string B. How many fixes do we need to make string A identical to target string B when we can <code class="language-plaintext highlighter-rouge">replace</code>, <code class="language-plaintext highlighter-rouge">insert</code> or <code class="language-plaintext highlighter-rouge">delete</code> characters of string A?</em></p>
+
+<p>(There is upper and lower bounds in terms of result value. Please check <a href="https://en.wikipedia.org/wiki/Levenshtein_distance#Upper_and_lower_bounds">wikipedia page</a> for the details.)</p>
+
+<h3 id="dp-table">DP Table</h3>
+
+<p>In the table below, “sitting” (vertically mapped on left) is the subject string to be compared against the target string, “kitten” (mapped horizontally on top). We define base cases to be empty character, so the first row and column increases one by one. (As to why, please refer to comments on the table.)</p>
+
+<p>We go through each cell from position <code class="language-plaintext highlighter-rouge">[1, 1]</code> to right every row, comparing each character. From a perspective of the subject string, horizontal increments represent additions of characters and vertical increments represent deletions. Diagnal increments are somewhat special: they represents replacements of characters, and we do not require replacement when characters are identical to each other, in which case the operation count remains the same as the one above and left.</p>
+
+<p><img src="/assets/images/levenshtein.png" style="background-color: #FFF;" />
+<!-- ![levenshtein](/image/levenshtein.png) --></p>
+
+<h3 id="implementation">Implementation</h3>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">levenshtein</span><span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="n">target</span><span class="p">):</span>
+    <span class="n">slen</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>  <span class="c1"># +1 for empty string
+</span>    <span class="n">tlen</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">target</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="n">dp</span> <span class="o">=</span> <span class="p">[[</span><span class="mi">0</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">tlen</span><span class="p">)]</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">slen</span><span class="p">)]</span>  <span class="c1"># DP table creation
+</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">slen</span><span class="p">):</span>  <span class="c1"># base case of an empty character
+</span>        <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">i</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">tlen</span><span class="p">):</span>
+        <span class="n">dp</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">i</span>
+
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">slen</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">tlen</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">s</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="n">target</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]:</span>  <span class="c1"># if characters are identical, cost is 0
+</span>                <span class="n">substitute_cost</span> <span class="o">=</span> <span class="mi">0</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">substitute_cost</span> <span class="o">=</span> <span class="mi">1</span>
+            <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span>  <span class="c1"># delete
+</span>                           <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span>  <span class="c1"># insert
+</span>                           <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="n">substitute_cost</span><span class="p">)</span>  <span class="c1"># substitute
+</span>
+    <span class="k">return</span> <span class="n">dp</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+</code></pre></div></div>]]></content><author><name></name></author><summary type="html"><![CDATA[DP for String Metrics: Levenstein Distance]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://yohei.codes/assets/images/levenshtein.png" /><media:content medium="image" url="https://yohei.codes/assets/images/levenshtein.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="en"><title type="html">DP for String Metrics</title><link href="https://yohei.codes/2023/02/02/dp-for-string-metrics.html" rel="alternate" type="text/html" title="DP for String Metrics" /><published>2023-02-02T00:00:00+00:00</published><updated>2023-02-02T00:00:00+00:00</updated><id>https://yohei.codes/2023/02/02/dp-for-string-metrics</id><content type="html" xml:base="https://yohei.codes/2023/02/02/dp-for-string-metrics.html"><![CDATA[<h1 id="dp-for-string-metrics">DP for String Metrics</h1>
+
+<p>Dynamic programming (DP) solves a complicate problem in <a href="https://en.wikipedia.org/wiki/Optimal_substructure">optimal substructure</a> by breaking it down into simpler sub-problems, and there are DP patterns that are effective for string metrics. These articles are my summary notes on them. Please feel free to ping me for anything you think I should add.</p>
+
+<blockquote>
+  <h3 id="list-of-articles">List of Articles</h3>
+
+  <ul>
+    <li><a href="/2023/02/03/dp-levenshtein.html">Levenshtein Distance</a></li>
+    <li><a href="/2023/02/05/dp-lcs.html">Longest Common Subsequence</a></li>
+    <li><a href="/2023/02/06/dp-regex.html">Regular Expression</a></li>
+    <li>Distinct Subsequence (coming soon)</li>
+    <li>Longest Repeating Subsequence (coming soon)</li>
+    <li>Hamming Distance (coming soon)</li>
+  </ul>
+</blockquote>
+
+<h2 id="prerequisite">Prerequisite</h2>
+
+<p>I tried to break things down as much as I could in the articles, however I’m not sure if they are granular enough to cover the fundamentals of DP itself. If you are not familiar with DP, knapsack problem would be a good starter for getting into DP. There are many materials online.</p>
+
+<h2 id="keys-for-understanding-dp-table-initialization--update">Keys for understanding: DP table initialization &amp; update</h2>
+
+<p>There are multiple ways to solve problems with DP. Among them, this series uses a bottom-up approach exclusively. While top-down approach uses recursion, bottom-up approach uses a table (tabulation) which I find easier to visualize to understand the solutions.</p>
+
+<p>Example of DP table (from Levenstein Distance)：</p>
+
+<p><img src="/assets/images/levenshtein.png" style="background-color: #FFF;" />
+<!-- ![levenshtein](/assets/images/levenshtein.png) --></p>
+
+<p>This series introduces DP patterns for different string metrics. At a glance they look somewhat similar, using table and all, however actual mechanism behind them is different to each one. The key difference to understand them is the meaning of values in a DP table, which makes table initialization and table update unique to each solution and worth paying our attention to.</p>
+
+<p>Example codes of updating DP table:</p>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">if</span> <span class="n">s</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="n">target</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]:</span>  <span class="c1"># if characters are identical, cost is 0
+</span>    <span class="n">substitute_cost</span> <span class="o">=</span> <span class="mi">0</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="n">substitute_cost</span> <span class="o">=</span> <span class="mi">1</span>
+<span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span>  <span class="c1"># delete
+</span>                <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span>  <span class="c1"># insert
+</span>                <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="n">substitute_cost</span><span class="p">)</span>  <span class="c1"># substitute
+</span></code></pre></div></div>]]></content><author><name></name></author><summary type="html"><![CDATA[DP for String Metrics]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://yohei.codes/assets/images/levenshtein.png" /><media:content medium="image" url="https://yohei.codes/assets/images/levenshtein.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="en"><title type="html">xv6: How exactly is memory addressed? (Part 2)</title><link href="https://yohei.codes/2020/07/31/xv6-memory-2.html" rel="alternate" type="text/html" title="xv6: How exactly is memory addressed? (Part 2)" /><published>2020-07-31T00:00:00+00:00</published><updated>2020-07-31T00:00:00+00:00</updated><id>https://yohei.codes/2020/07/31/xv6-memory-2</id><content type="html" xml:base="https://yohei.codes/2020/07/31/xv6-memory-2.html"><![CDATA[<h1 id="xv6-how-exactly-is-memory-addressed-part-2">xv6: How exactly is memory addressed? (Part 2)</h1>
+
+<p>This is the second article covering the memory management of xv6, continuing from <a href="/2020/06/18/xv6-memory-1.html">the previous article</a> which covered the memory management at the early stages of xv6’s kernel initialization before getting into its main function.</p>
+
+<p>In this article, the memory management mechanism in both kernel mode and user mode is covered. Specifically xv6 uses 2-level memory paging supported by MMU (memory management unit). This is essentially the same mechanism that Linux kernel manages its memory though the number of levels is different.</p>
+
+<h2 id="mainc">main.c</h2>
+
+<p>Once <code class="language-plaintext highlighter-rouge">entry.S</code> jumps to <code class="language-plaintext highlighter-rouge">main</code> function, it starts with the memory management setup. The first two functions, <code class="language-plaintext highlighter-rouge">kinit1</code> and <code class="language-plaintext highlighter-rouge">kvmalloc</code> set up the 2-level paging mechanism for kernel mode. After all the device initialization and interrupt setup, <code class="language-plaintext highlighter-rouge">kinit2</code> and <code class="language-plaintext highlighter-rouge">userinit</code> functions set up the memory for user mode.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">int</span>
+<span class="nf">main</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="n">kinit1</span><span class="p">(</span><span class="n">end</span><span class="p">,</span> <span class="n">P2V</span><span class="p">(</span><span class="mi">4</span><span class="o">*</span><span class="mi">1024</span><span class="o">*</span><span class="mi">1024</span><span class="p">));</span> <span class="c1">// phys page allocator</span>
+  <span class="n">kvmalloc</span><span class="p">();</span>      <span class="c1">// kernel page table</span>
+  <span class="p">...</span> <span class="n">device</span> <span class="n">initialization</span> <span class="p">...</span>
+  <span class="n">kinit2</span><span class="p">(</span><span class="n">P2V</span><span class="p">(</span><span class="mi">4</span><span class="o">*</span><span class="mi">1024</span><span class="o">*</span><span class="mi">1024</span><span class="p">),</span> <span class="n">P2V</span><span class="p">(</span><span class="n">PHYSTOP</span><span class="p">));</span> <span class="c1">// must come after startothers()</span>
+  <span class="n">userinit</span><span class="p">();</span>      <span class="c1">// first user process</span>
+  <span class="n">mpmain</span><span class="p">();</span>        <span class="c1">// finish this processor's setup</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<h2 id="kernel-mode">Kernel Mode</h2>
+
+<p>Let’s take a look at the memory setup for kernel mode first. Going through it would cover the fundamentals of paging setup and actually the kernel page mapping is used in user mode memory setup as well.</p>
+
+<h3 id="memory-allocation">Memory Allocation</h3>
+
+<p>The first line of <code class="language-plaintext highlighter-rouge">main</code> function runs <code class="language-plaintext highlighter-rouge">kinit1</code> function which takes <code class="language-plaintext highlighter-rouge">*vstart</code> and <code class="language-plaintext highlighter-rouge">*vend</code> arguments. The call is made to allocate the memory from <code class="language-plaintext highlighter-rouge">end</code> (first address after kernel loaded from ELF file) to <code class="language-plaintext highlighter-rouge">P2V(4*1024*1024)</code> which would be <code class="language-plaintext highlighter-rouge">0x80400000</code> (4MB from KERNBASE: 0x80000000). <code class="language-plaintext highlighter-rouge">kinit1</code> function allocates memory space as follows:</p>
+
+<blockquote>
+  <p><strong>Notes</strong></p>
+  <ul>
+    <li>As covered in the <a href="/2020/06/18/xv6-memory-1.html">part 1</a>, kernel instructions are based on the virtual address of <code class="language-plaintext highlighter-rouge">0x80100000</code>.</li>
+    <li>At this point, the kernel is still using the 2-level mapping, <code class="language-plaintext highlighter-rouge">entrypgdir</code>.</li>
+  </ul>
+</blockquote>
+
+<p>Firstly <code class="language-plaintext highlighter-rouge">kinit1</code> calls <code class="language-plaintext highlighter-rouge">freerange</code> after initializing lock for the data structure of kernel memory:</p>
+
+<p>kalloc.c</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span>
+<span class="nf">kinit1</span><span class="p">(</span><span class="kt">void</span> <span class="o">*</span><span class="n">vstart</span><span class="p">,</span> <span class="kt">void</span> <span class="o">*</span><span class="n">vend</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="n">initlock</span><span class="p">(</span><span class="o">&amp;</span><span class="n">kmem</span><span class="p">.</span><span class="n">lock</span><span class="p">,</span> <span class="s">"kmem"</span><span class="p">);</span>
+  <span class="n">kmem</span><span class="p">.</span><span class="n">use_lock</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+  <span class="n">freerange</span><span class="p">(</span><span class="n">vstart</span><span class="p">,</span> <span class="n">vend</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">freerange</code> calls <code class="language-plaintext highlighter-rouge">kfree</code> until <code class="language-plaintext highlighter-rouge">vend</code> by every <code class="language-plaintext highlighter-rouge">PGSIZE</code>:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span>
+<span class="nf">freerange</span><span class="p">(</span><span class="kt">void</span> <span class="o">*</span><span class="n">vstart</span><span class="p">,</span> <span class="kt">void</span> <span class="o">*</span><span class="n">vend</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="kt">char</span> <span class="o">*</span><span class="n">p</span><span class="p">;</span>
+  <span class="n">p</span> <span class="o">=</span> <span class="p">(</span><span class="kt">char</span><span class="o">*</span><span class="p">)</span><span class="n">PGROUNDUP</span><span class="p">((</span><span class="n">uint</span><span class="p">)</span><span class="n">vstart</span><span class="p">);</span>
+  <span class="k">for</span><span class="p">(;</span> <span class="n">p</span> <span class="o">+</span> <span class="n">PGSIZE</span> <span class="o">&lt;=</span> <span class="p">(</span><span class="kt">char</span><span class="o">*</span><span class="p">)</span><span class="n">vend</span><span class="p">;</span> <span class="n">p</span> <span class="o">+=</span> <span class="n">PGSIZE</span><span class="p">)</span>
+    <span class="n">kfree</span><span class="p">(</span><span class="n">p</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">kfree</code> casts the specified pointer to <code class="language-plaintext highlighter-rouge">run</code> struct which is a single-linked list and push it into the head of <code class="language-plaintext highlighter-rouge">kmem.freelist</code>. Subsequently <code class="language-plaintext highlighter-rouge">kalloc</code> function is used to retrieve the pointer to the requested page from <code class="language-plaintext highlighter-rouge">kmem.freelist</code>:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">struct</span> <span class="n">run</span> <span class="p">{</span>
+  <span class="k">struct</span> <span class="n">run</span> <span class="o">*</span><span class="n">next</span><span class="p">;</span>
+<span class="p">};</span>
+<span class="p">...</span>
+<span class="kt">void</span>
+<span class="nf">kfree</span><span class="p">(</span><span class="kt">char</span> <span class="o">*</span><span class="n">v</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="p">...</span>
+  <span class="c1">// Fill with junk to catch dangling refs.</span>
+  <span class="n">memset</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">PGSIZE</span><span class="p">);</span>
+
+  <span class="k">if</span><span class="p">(</span><span class="n">kmem</span><span class="p">.</span><span class="n">use_lock</span><span class="p">)</span>
+    <span class="n">acquire</span><span class="p">(</span><span class="o">&amp;</span><span class="n">kmem</span><span class="p">.</span><span class="n">lock</span><span class="p">);</span>
+  <span class="n">r</span> <span class="o">=</span> <span class="p">(</span><span class="k">struct</span> <span class="n">run</span><span class="o">*</span><span class="p">)</span><span class="n">v</span><span class="p">;</span>
+  <span class="n">r</span><span class="o">-&gt;</span><span class="n">next</span> <span class="o">=</span> <span class="n">kmem</span><span class="p">.</span><span class="n">freelist</span><span class="p">;</span>
+  <span class="n">kmem</span><span class="p">.</span><span class="n">freelist</span> <span class="o">=</span> <span class="n">r</span><span class="p">;</span>
+  <span class="k">if</span><span class="p">(</span><span class="n">kmem</span><span class="p">.</span><span class="n">use_lock</span><span class="p">)</span>
+    <span class="n">release</span><span class="p">(</span><span class="o">&amp;</span><span class="n">kmem</span><span class="p">.</span><span class="n">lock</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<h3 id="2-level-paging">2-level Paging</h3>
+
+<p>We have covered how kernel allocates memory for a range by pages. Now let’s look into <code class="language-plaintext highlighter-rouge">kvmalloc</code> to find out how the 2-level paging is set up.</p>
+
+<blockquote>
+  <p>Once you search “paging x86” or something similar online, we see this common diagram as below explaining how a virtual address is split into 3 different parts, eventually forming a physical address. At a glance, I got the idea of this conversion from virtual addresses to physical addresses, however I had difficulty understanding how an OS would make use of it.
+<img src="/assets/images/paging-mmu-diagram.png" alt="paging-mmu-diagram" />
+The key point here is to understand that an OS needs to setup these maps. Specifically an OS would allocate one page for a page directory and another for page table first, and it maps the arbitrary virtual address to the targeted physical address by creating the page directory entries and the page table entries. It’s also important to understand this mapping is based on the page directory address which would be stored in <code class="language-plaintext highlighter-rouge">CR3</code> register. So switching the <code class="language-plaintext highlighter-rouge">CR3</code> register value would change the virtual-to-physical mapping and xv6 does it per process. This whole flow is exactly what <code class="language-plaintext highlighter-rouge">kvmalloc</code> function does and its details are explained as follows.</p>
+</blockquote>
+
+<p>Firstly, <code class="language-plaintext highlighter-rouge">kvmalloc</code> calls <code class="language-plaintext highlighter-rouge">setupkvm</code> which sets up the 2-level memory paging structure. It starts by allocating a new page directory, <code class="language-plaintext highlighter-rouge">pgdir</code> by calling <code class="language-plaintext highlighter-rouge">kalloc</code>. After that, the key function here is <code class="language-plaintext highlighter-rouge">mappages</code> which sets a range of physical addresses into the page tables in a specified page directory and a starting virtual address:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">pde_t</span><span class="o">*</span>
+<span class="nf">setupkvm</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="n">pde_t</span> <span class="o">*</span><span class="n">pgdir</span><span class="p">;</span>
+  <span class="k">struct</span> <span class="n">kmap</span> <span class="o">*</span><span class="n">k</span><span class="p">;</span>
+
+  <span class="k">if</span><span class="p">((</span><span class="n">pgdir</span> <span class="o">=</span> <span class="p">(</span><span class="n">pde_t</span><span class="o">*</span><span class="p">)</span><span class="n">kalloc</span><span class="p">())</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="c1">// allocates a page for the page directory</span>
+    <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+  <span class="n">memset</span><span class="p">(</span><span class="n">pgdir</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">PGSIZE</span><span class="p">);</span>
+  <span class="k">if</span> <span class="p">(</span><span class="n">P2V</span><span class="p">(</span><span class="n">PHYSTOP</span><span class="p">)</span> <span class="o">&gt;</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="n">DEVSPACE</span><span class="p">)</span>
+    <span class="n">panic</span><span class="p">(</span><span class="s">"PHYSTOP too high"</span><span class="p">);</span>
+  <span class="k">for</span><span class="p">(</span><span class="n">k</span> <span class="o">=</span> <span class="n">kmap</span><span class="p">;</span> <span class="n">k</span> <span class="o">&lt;</span> <span class="o">&amp;</span><span class="n">kmap</span><span class="p">[</span><span class="n">NELEM</span><span class="p">(</span><span class="n">kmap</span><span class="p">)];</span> <span class="n">k</span><span class="o">++</span><span class="p">)</span>
+    <span class="k">if</span><span class="p">(</span><span class="n">mappages</span><span class="p">(</span><span class="n">pgdir</span><span class="p">,</span> <span class="n">k</span><span class="o">-&gt;</span><span class="n">virt</span><span class="p">,</span> <span class="n">k</span><span class="o">-&gt;</span><span class="n">phys_end</span> <span class="o">-</span> <span class="n">k</span><span class="o">-&gt;</span><span class="n">phys_start</span><span class="p">,</span>
+                <span class="p">(</span><span class="n">uint</span><span class="p">)</span><span class="n">k</span><span class="o">-&gt;</span><span class="n">phys_start</span><span class="p">,</span> <span class="n">k</span><span class="o">-&gt;</span><span class="n">perm</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+      <span class="n">freevm</span><span class="p">(</span><span class="n">pgdir</span><span class="p">);</span>
+      <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="p">}</span>
+  <span class="k">return</span> <span class="n">pgdir</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">mappages</code> writes physical address into the page table entries by a page size and loops till it writes all the pages in the specified size. Page table entries are retrieved by another function, <code class="language-plaintext highlighter-rouge">walkpgdir</code>:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="kt">int</span>
+<span class="nf">mappages</span><span class="p">(</span><span class="n">pde_t</span> <span class="o">*</span><span class="n">pgdir</span><span class="p">,</span> <span class="kt">void</span> <span class="o">*</span><span class="n">va</span><span class="p">,</span> <span class="n">uint</span> <span class="n">size</span><span class="p">,</span> <span class="n">uint</span> <span class="n">pa</span><span class="p">,</span> <span class="kt">int</span> <span class="n">perm</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="kt">char</span> <span class="o">*</span><span class="n">a</span><span class="p">,</span> <span class="o">*</span><span class="n">last</span><span class="p">;</span>
+  <span class="n">pte_t</span> <span class="o">*</span><span class="n">pte</span><span class="p">;</span>
+
+  <span class="n">a</span> <span class="o">=</span> <span class="p">(</span><span class="kt">char</span><span class="o">*</span><span class="p">)</span><span class="n">PGROUNDDOWN</span><span class="p">((</span><span class="n">uint</span><span class="p">)</span><span class="n">va</span><span class="p">);</span>
+  <span class="n">last</span> <span class="o">=</span> <span class="p">(</span><span class="kt">char</span><span class="o">*</span><span class="p">)</span><span class="n">PGROUNDDOWN</span><span class="p">(((</span><span class="n">uint</span><span class="p">)</span><span class="n">va</span><span class="p">)</span> <span class="o">+</span> <span class="n">size</span> <span class="o">-</span> <span class="mi">1</span><span class="p">);</span>
+  <span class="k">for</span><span class="p">(;;){</span>
+    <span class="k">if</span><span class="p">((</span><span class="n">pte</span> <span class="o">=</span> <span class="n">walkpgdir</span><span class="p">(</span><span class="n">pgdir</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span>
+      <span class="k">return</span> <span class="o">-</span><span class="mi">1</span><span class="p">;</span>
+    <span class="k">if</span><span class="p">(</span><span class="o">*</span><span class="n">pte</span> <span class="o">&amp;</span> <span class="n">PTE_P</span><span class="p">)</span>
+      <span class="n">panic</span><span class="p">(</span><span class="s">"remap"</span><span class="p">);</span>
+    <span class="o">*</span><span class="n">pte</span> <span class="o">=</span> <span class="n">pa</span> <span class="o">|</span> <span class="n">perm</span> <span class="o">|</span> <span class="n">PTE_P</span><span class="p">;</span> <span class="c1">// writes physical address on retrieved page table entry</span>
+    <span class="k">if</span><span class="p">(</span><span class="n">a</span> <span class="o">==</span> <span class="n">last</span><span class="p">)</span>
+      <span class="k">break</span><span class="p">;</span>
+    <span class="n">a</span> <span class="o">+=</span> <span class="n">PGSIZE</span><span class="p">;</span>
+    <span class="n">pa</span> <span class="o">+=</span> <span class="n">PGSIZE</span><span class="p">;</span>
+  <span class="p">}</span>
+  <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">walkpgdir</code> firstly makes the pointer to the page directory entry, <code class="language-plaintext highlighter-rouge">pde</code> from the pointer to the page directory, <code class="language-plaintext highlighter-rouge">pgdir</code> and the specified virtual address, <code class="language-plaintext highlighter-rouge">va</code> using its highest 10 bits. Then it checks with <code class="language-plaintext highlighter-rouge">PTE_P</code> flag if the page directory entry has already been allocated or not. If it’s present, it means the page directory entry already has the pointer value to the page table, so it dereferences the pointer to the page table from the page directory entry. If it’s not present, it allocates a new page for the page table, and write its address on the page directory entry. Lastly, it returns the pointer to the page table entry specified with the page table and the specified virtual address using its 10 bits in the middle:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="n">pte_t</span> <span class="o">*</span>
+<span class="nf">walkpgdir</span><span class="p">(</span><span class="n">pde_t</span> <span class="o">*</span><span class="n">pgdir</span><span class="p">,</span> <span class="k">const</span> <span class="kt">void</span> <span class="o">*</span><span class="n">va</span><span class="p">,</span> <span class="kt">int</span> <span class="n">alloc</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="n">pde_t</span> <span class="o">*</span><span class="n">pde</span><span class="p">;</span>
+  <span class="n">pte_t</span> <span class="o">*</span><span class="n">pgtab</span><span class="p">;</span>
+
+  <span class="n">pde</span> <span class="o">=</span> <span class="o">&amp;</span><span class="n">pgdir</span><span class="p">[</span><span class="n">PDX</span><span class="p">(</span><span class="n">va</span><span class="p">)];</span> <span class="c1">// creates a pointer to the page directory entry</span>
+  <span class="k">if</span><span class="p">(</span><span class="o">*</span><span class="n">pde</span> <span class="o">&amp;</span> <span class="n">PTE_P</span><span class="p">){</span>
+    <span class="n">pgtab</span> <span class="o">=</span> <span class="p">(</span><span class="n">pte_t</span><span class="o">*</span><span class="p">)</span><span class="n">P2V</span><span class="p">(</span><span class="n">PTE_ADDR</span><span class="p">(</span><span class="o">*</span><span class="n">pde</span><span class="p">));</span> <span class="c1">// creates a page table from the page directory entry</span>
+  <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+    <span class="k">if</span><span class="p">(</span><span class="o">!</span><span class="n">alloc</span> <span class="o">||</span> <span class="p">(</span><span class="n">pgtab</span> <span class="o">=</span> <span class="p">(</span><span class="n">pte_t</span><span class="o">*</span><span class="p">)</span><span class="n">kalloc</span><span class="p">())</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="c1">// creates a page table</span>
+      <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="c1">// Make sure all those PTE_P bits are zero.</span>
+    <span class="n">memset</span><span class="p">(</span><span class="n">pgtab</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">PGSIZE</span><span class="p">);</span>
+    <span class="c1">// The permissions here are overly generous, but they can</span>
+    <span class="c1">// be further restricted by the permissions in the page table</span>
+    <span class="c1">// entries, if necessary.</span>
+    <span class="o">*</span><span class="n">pde</span> <span class="o">=</span> <span class="n">V2P</span><span class="p">(</span><span class="n">pgtab</span><span class="p">)</span> <span class="o">|</span> <span class="n">PTE_P</span> <span class="o">|</span> <span class="n">PTE_W</span> <span class="o">|</span> <span class="n">PTE_U</span><span class="p">;</span> <span class="c1">// writes the address to the page table on the page directory entry</span>
+  <span class="p">}</span>
+  <span class="k">return</span> <span class="o">&amp;</span><span class="n">pgtab</span><span class="p">[</span><span class="n">PTX</span><span class="p">(</span><span class="n">va</span><span class="p">)];</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>We have covered the workflow of setting up the 2-level paging. Now we should look into the actual mapping created for the kernel:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="k">struct</span> <span class="n">kmap</span> <span class="p">{</span>
+  <span class="kt">void</span> <span class="o">*</span><span class="n">virt</span><span class="p">;</span>
+  <span class="n">uint</span> <span class="n">phys_start</span><span class="p">;</span>
+  <span class="n">uint</span> <span class="n">phys_end</span><span class="p">;</span>
+  <span class="kt">int</span> <span class="n">perm</span><span class="p">;</span>
+<span class="p">}</span> <span class="n">kmap</span><span class="p">[]</span> <span class="o">=</span> <span class="p">{</span>
+ <span class="p">{</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="n">KERNBASE</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>             <span class="n">EXTMEM</span><span class="p">,</span>    <span class="n">PTE_W</span><span class="p">},</span> <span class="c1">// I/O space</span>
+ <span class="p">{</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="n">KERNLINK</span><span class="p">,</span> <span class="n">V2P</span><span class="p">(</span><span class="n">KERNLINK</span><span class="p">),</span> <span class="n">V2P</span><span class="p">(</span><span class="n">data</span><span class="p">),</span> <span class="mi">0</span><span class="p">},</span>     <span class="c1">// kern text+rodata</span>
+ <span class="p">{</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="n">data</span><span class="p">,</span>     <span class="n">V2P</span><span class="p">(</span><span class="n">data</span><span class="p">),</span>     <span class="n">PHYSTOP</span><span class="p">,</span>   <span class="n">PTE_W</span><span class="p">},</span> <span class="c1">// kern data+memory</span>
+ <span class="p">{</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="n">DEVSPACE</span><span class="p">,</span> <span class="n">DEVSPACE</span><span class="p">,</span>      <span class="mi">0</span><span class="p">,</span>         <span class="n">PTE_W</span><span class="p">},</span> <span class="c1">// more devices</span>
+<span class="p">};</span>
+</code></pre></div></div>
+
+<p>The actual addresses of the mapping above look like this:</p>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">KERNBASE</code> (0x80000000) to physical: <code class="language-plaintext highlighter-rouge">0</code> to <code class="language-plaintext highlighter-rouge">EXTMEM</code> (0x100000)</li>
+  <li><code class="language-plaintext highlighter-rouge">KERNLINK</code> (0x80100000) to physical: <code class="language-plaintext highlighter-rouge">KERNLINK</code> (0x100000) to <code class="language-plaintext highlighter-rouge">V2P(data)</code> (rodata in kernel image)</li>
+  <li><code class="language-plaintext highlighter-rouge">data</code> to physical: <code class="language-plaintext highlighter-rouge">V2P(data)</code> to <code class="language-plaintext highlighter-rouge">PHYSTOP</code> (0xE000000: 235MB)</li>
+  <li><code class="language-plaintext highlighter-rouge">DEVSPACE</code> (0xFE000000) to physical: <code class="language-plaintext highlighter-rouge">DEVSPACE</code> (0xFE000000) to <code class="language-plaintext highlighter-rouge">0</code></li>
+</ul>
+
+<p>The <code class="language-plaintext highlighter-rouge">kvmalloc</code> function creates the memory mapping as above, and calls <code class="language-plaintext highlighter-rouge">switchkvm</code> function which activates it by writing the address of the returned page directory on <code class="language-plaintext highlighter-rouge">CR3</code> register. The execution proceeds straight as the virtual address mapping to the physical kernel instructions are the same as the previous page directory, <code class="language-plaintext highlighter-rouge">pgdir</code>.</p>
+
+<h2 id="user-mode">User Mode</h2>
+
+<p>Back in the kernel’s <code class="language-plaintext highlighter-rouge">main</code> function, there are two calls made for user processes: <code class="language-plaintext highlighter-rouge">kinit2(P2V(4*1024*1024), P2V(PHYSTOP))</code> and <code class="language-plaintext highlighter-rouge">userinit()</code>. The first call is for allocating the memory from <code class="language-plaintext highlighter-rouge">0x80400000</code> to <code class="language-plaintext highlighter-rouge">0x8E000000</code>. The second call takes care of multiple things for a process including context, memory, and trap frame.</p>
+
+<p>We can see <code class="language-plaintext highlighter-rouge">userinit</code> function calling <code class="language-plaintext highlighter-rouge">setupkvm</code> function below. This is to enable the switch to kernel mode for system calls and interrupts without switching the page directories.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span> <span class="nf">userinit</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="k">struct</span> <span class="n">proc</span> <span class="o">*</span><span class="n">p</span><span class="p">;</span>
+  <span class="k">extern</span> <span class="kt">char</span> <span class="n">_binary_initcode_start</span><span class="p">[],</span> <span class="n">_binary_initcode_size</span><span class="p">[];</span>
+
+  <span class="n">p</span> <span class="o">=</span> <span class="n">allocproc</span><span class="p">();</span>
+
+  <span class="n">initproc</span> <span class="o">=</span> <span class="n">p</span><span class="p">;</span>
+  <span class="k">if</span> <span class="p">((</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">pgdir</span> <span class="o">=</span> <span class="n">setupkvm</span><span class="p">())</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span>
+    <span class="n">panic</span><span class="p">(</span><span class="s">"userinit: out of memory?"</span><span class="p">);</span>
+  <span class="n">inituvm</span><span class="p">(</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">pgdir</span><span class="p">,</span> <span class="n">_binary_initcode_start</span><span class="p">,</span> <span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="n">_binary_initcode_size</span><span class="p">);</span>
+  <span class="p">...</span>
+</code></pre></div></div>
+
+<p>Once <code class="language-plaintext highlighter-rouge">setupkvm</code> sets up the page tables for kernal codes, <code class="language-plaintext highlighter-rouge">userinit</code> calls <code class="language-plaintext highlighter-rouge">inituvm</code>, passing the page directory created and a pointer to and the size of <code class="language-plaintext highlighter-rouge">initcode</code>.</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span>
+<span class="nf">inituvm</span><span class="p">(</span><span class="n">pde_t</span> <span class="o">*</span><span class="n">pgdir</span><span class="p">,</span> <span class="kt">char</span> <span class="o">*</span><span class="n">init</span><span class="p">,</span> <span class="n">uint</span> <span class="n">sz</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="kt">char</span> <span class="o">*</span><span class="n">mem</span><span class="p">;</span>
+
+  <span class="k">if</span><span class="p">(</span><span class="n">sz</span> <span class="o">&gt;=</span> <span class="n">PGSIZE</span><span class="p">)</span>
+    <span class="n">panic</span><span class="p">(</span><span class="s">"inituvm: more than a page"</span><span class="p">);</span>
+  <span class="n">mem</span> <span class="o">=</span> <span class="n">kalloc</span><span class="p">();</span>
+  <span class="n">memset</span><span class="p">(</span><span class="n">mem</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">PGSIZE</span><span class="p">);</span>
+  <span class="n">mappages</span><span class="p">(</span><span class="n">pgdir</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">PGSIZE</span><span class="p">,</span> <span class="n">V2P</span><span class="p">(</span><span class="n">mem</span><span class="p">),</span> <span class="n">PTE_W</span><span class="o">|</span><span class="n">PTE_U</span><span class="p">);</span>
+  <span class="n">memmove</span><span class="p">(</span><span class="n">mem</span><span class="p">,</span> <span class="n">init</span><span class="p">,</span> <span class="n">sz</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">inituvm</code> calls <code class="language-plaintext highlighter-rouge">kalloc</code> function to allocate a new page and resets its content to <code class="language-plaintext highlighter-rouge">0</code>. After that, it calls <code class="language-plaintext highlighter-rouge">mappages</code> with the virtual address <code class="language-plaintext highlighter-rouge">0</code> and the physical address of the new page, which means the virtual address <code class="language-plaintext highlighter-rouge">0</code> would be pointing to this new page in this page directory. Lastly <code class="language-plaintext highlighter-rouge">memmove</code> is called to write the <code class="language-plaintext highlighter-rouge">init</code> codes into the newly allocated page. This achieves the memory structure for a user process where it can just start with the <code class="language-plaintext highlighter-rouge">EIP</code> from <code class="language-plaintext highlighter-rouge">0</code> while keeping the access to kernel pages.</p>
+
+<h2 id="summary">Summary</h2>
+
+<p>It became quite a lengthy article, but I hope I could cover how memory is managed by xv6 using the 2-level paging structure step-by-step. It was a good exercise for myself to organize my learnings as well. I hope someone would find it useful.</p>]]></content><author><name></name></author><summary type="html"><![CDATA[xv6: How exactly is memory addressed? (Part 2)]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://yohei.codes/assets/images/paging-mmu-diagram.png" /><media:content medium="image" url="https://yohei.codes/assets/images/paging-mmu-diagram.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry></feed>

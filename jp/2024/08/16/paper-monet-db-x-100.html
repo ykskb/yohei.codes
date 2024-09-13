@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="jp"><head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>論文：MonetDB/X100: Hyper-Pipelining Query Execution | yohei.codes</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="論文：MonetDB/X100: Hyper-Pipelining Query Execution" />
+<meta property="og:locale" content="jp" />
+<meta name="description" content="論文：MonetDB/X100: Hyper-Pipelining Query Execution" />
+<meta property="og:description" content="論文：MonetDB/X100: Hyper-Pipelining Query Execution" />
+<link rel="canonical" href="https://yohei.codes/jp/2024/08/16/paper-monet-db-x-100.html" />
+<meta property="og:url" content="https://yohei.codes/2024/08/16/paper-monet-db-x-100.html" />
+<meta property="og:site_name" content="yohei.codes" />
+<meta property="og:image" content="https://yohei.codes/assets/images/screenshot.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2024-08-16T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://yohei.codes/assets/images/screenshot.png" />
+<meta property="twitter:title" content="論文：MonetDB/X100: Hyper-Pipelining Query Execution" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2024-08-16T00:00:00+00:00","datePublished":"2024-08-16T00:00:00+00:00","description":"論文：MonetDB/X100: Hyper-Pipelining Query Execution","headline":"論文：MonetDB/X100: Hyper-Pipelining Query Execution","image":"https://yohei.codes/assets/images/screenshot.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://yohei.codes/2024/08/16/paper-monet-db-x-100.html"},"url":"https://yohei.codes/2024/08/16/paper-monet-db-x-100.html"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/jp/assets/main.css"><link type="application/atom+xml" rel="alternate" href="https://yohei.codes/jp/feed.xml" title="yohei.codes" /><script>
+if(!(window.doNotTrack === "1" || navigator.doNotTrack === "1" || navigator.doNotTrack === "yes" || navigator.msDoNotTrack === "1")) {
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-52885755-2', 'auto');
+  ga('send', 'pageview');
+}
+</script>
+  
+<link rel="apple-touch-icon" sizes="180x180" href="/jp/assets/images/favicon/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/jp/assets/images/favicon/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/jp/assets/images/favicon/favicon-16x16.png">
+    <link rel="manifest" href="/jp/assets/images/favicon/manifest.json">
+    <link rel="mask-icon" href="/jp/assets/images/favicon/safari-pinned-tab.svg" color="#5bbad5">
+    <meta name="msapplication-TileColor" content="#da532c">
+    <meta name="theme-color" content="#ffffff">
+  </head><body><header class="site-header" role="banner">
+
+    <div class="wrapper"><a class="site-title" rel="author" href="/jp/">yohei.codes</a><nav class="site-nav">
+          <input type="checkbox" id="nav-trigger" class="nav-trigger" />
+          <label for="nav-trigger">
+            <span class="menu-icon">
+              <svg viewBox="0 0 18 15" width="18px" height="15px">
+                <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.032C17.335,0,18,0.665,18,1.484L18,1.484z M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.032C17.335,6.031,18,6.696,18,7.516L18,7.516z M18,13.516C18,14.335,17.335,15,16.516,15H1.484 C0.665,15,0,14.335,0,13.516l0,0c0-0.82,0.665-1.483,1.484-1.483h15.032C17.335,12.031,18,12.695,18,13.516L18,13.516z"/>
+              </svg>
+            </span>
+          </label>
+  
+          <div class="trigger"><a class="page-link" href="/jp/about/">About</a>
+    
+    [          
+    
+        
+            <a href=" /2024/08/16/paper-monet-db-x-100.html">English</a> ]
+        
+    
+
+    
+    [          
+    
+        日本語 ]
+    
+</div>
+        </nav></div>
+  </header><main class="page-content" aria-label="Content">
+      <div class="wrapper">
+        <h1 id="論文monetdbx100-hyper-pipelining-query-execution">論文：MonetDB/X100: Hyper-Pipelining Query Execution</h1>
+
+<p>この記事は、<a href="http://cidrdb.org/cidr2005/papers/P19.pdf">「MonetDB/X100: Hyper-Pipelining Query Execution」</a>という論文からのメモです。この論文は、2005年に<a href="https://www.cidrdb.org/">The Conference on Innovative Data Systems Research (CIDR)</a>会議で発表されました。</p>
+
+<blockquote>
+  <h3 id="シリーズduckdbが採択した論文">シリーズ：DuckDBが採択した論文</h3>
+
+  <p>このシリーズは、<a href="https://duckdb.org/why_duckdb.html#standing-on-the-shoulders-of-giants">DuckDBが採用しいた論文</a>を読んだ際のメモをまとめたものです。</p>
+
+  <ul>
+    <li>ベクターベースのクエリエンジン: 本記事</li>
+    <li><a href="/jp/2024/08/20/paper-fast-serializable-mvcc.html">高速でSerializableなMVCC</a></li>
+    <li>Join順序の最適化 （近日公開）</li>
+    <li>サブクエリ展開（近日公開）</li>
+  </ul>
+
+  <p>Note: DuckDBはこの論文で説明されているベクターベースのクエリエンジンのアイデアを実装していますが、ストレージのモデルはMonet DBとは違っており、Monet DBがコラムごとに別々のファイルに保存するのに対し、DuckDBはRow Groupという列と行のハイブリッドモデルを採用しています。（<a href="https://duckdb.org/docs/internals/storage.html#row-groups">DuckDBへのリンクはこちら</a>）</p>
+</blockquote>
+
+<h2 id="主な内容">主な内容</h2>
+
+<p>この論文は、現代的なCPUをより効果的に活用するために、DBMSにおけるベクター化されたクエリ実行モデルを提案し、従来のVolcanoイテレータモデルと比較しています。</p>
+
+<ul>
+  <li>
+    <p>性能比較はTPC-Hベンチマークを使用して行われており、大規模なスキャン、結合、集計、ネストされたクエリを含む22の複雑なSQLクエリを評価しています。</p>
+  </li>
+  <li>
+    <p>論文には直接記載されていませんが、MonetDBはカラム指向のデータベースであり、比較されている従来のVolcanoモデルは行指向のデータベースであると推測されます。</p>
+  </li>
+</ul>
+
+<h2 id="クエリ解釈">クエリ解釈</h2>
+
+<ul>
+  <li>
+    <p>従来のモデル: Volcanoイテレータモデル = タプルごとに処理</p>
+
+    <p>各タプルはフィルタ、Join結合、集計などのさまざまな演算子を何度も通過する必要があり、解釈オーバーヘッドが発生し、CPUの並列処理の機会が限られてしまう。</p>
+  </li>
+  <li>
+    <p>提案されたモデル: ベクター化された処理</p>
+
+    <p>フィルタ、Join結合、集計などの操作をデータ全体のベクトルに一度に適用。</p>
+  </li>
+</ul>
+
+<h2 id="cpuキャッシュ">CPUキャッシュ</h2>
+
+<ul>
+  <li>
+    <p>従来のモデル: メモリにタプル全体を読み込む必要があるため、データがアクセスされるとき、未使用のデータもキャッシュラインを占有し、キャッシュミスが頻繁に発生。</p>
+  </li>
+  <li>
+    <p>提案されたモデル: 関連するデータのみをメモリに読み込む</p>
+
+    <ul>
+      <li>
+        <p>空間的局所性（Spacial locality）: 単一の列のデータがメモリに連続して格納されているため、キャッシュヒットが増え、連続したメモリアクセスが可能に。</p>
+      </li>
+      <li>
+        <p>時間的局所性（Temporal locality）: データがキャッシュに読み込まれると、次のチャンクが読み込まれる前にそのデータが繰り返し使用される。</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<p>例:</p>
+
+<ul>
+  <li>
+    <p>テーブル: <code class="language-plaintext highlighter-rouge">sale_id INT, date DATE, product_id INT, quantity INT, price FLOAT</code></p>
+  </li>
+  <li>
+    <p>クエリ: <code class="language-plaintext highlighter-rouge">SELECT SUM (quantity * price) AS total_revenue FROM sales;</code></p>
+  </li>
+  <li>
+    <p>キャッシュライン:</p>
+
+    <ul>
+      <li>
+        <p>行指向データベース: キャッシュラインに未使用の列が含まれる</p>
+
+        <p><code class="language-plaintext highlighter-rouge">[ sale_id | date | product_id | quantity | price | sale_id... ]</code></p>
+      </li>
+      <li>
+        <p>カラム指向データベース: 使用されるデータのみがキャッシュされる</p>
+
+        <p><code class="language-plaintext highlighter-rouge">[ quantity | quantity | quantity | quantity... ]</code></p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="cpuパイプラインの実行">CPUパイプラインの実行</h2>
+
+<ul>
+  <li>
+    <p>従来のモデル: タプルごとに処理 &amp; 行指向</p>
+
+    <ul>
+      <li>
+        <p>前述のように、頻繁なキャッシュミスのため、データが読み込まれる際にCPUがストールする。</p>
+      </li>
+      <li>
+        <p>各タプルごとに命令を繰り返しフェッチする必要がある (SIMDが使用されない)。</p>
+      </li>
+      <li>
+        <p>各タプルのIFやWHEREなどの条件により、ブランチミス予測が発生。</p>
+      </li>
+      <li>
+        <p>データ/制御ハザード = 命令の依存関係。命令を進める前に前の命令が完了するのを待つ必要が発生。</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>提案されたモデル: ベクター化された処理</p>
+
+    <ul>
+      <li>
+        <p>キャッシュミスが少ない = CPUのストールが少ない。</p>
+      </li>
+      <li>
+        <p>ベクター化されたデータはSIMDとよく一致し、データ処理を大幅に最適化。</p>
+      </li>
+      <li>
+        <p>命令間の依存関係が少ないか、まったくないため、CPUパイプラインが命令を効果的に計画し、実行することが可能。</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="ベンチマーク">ベンチマーク</h2>
+
+<ul>
+  <li>
+    <p>TPC-H Query 1: 大きなテーブルに対するスキャン、算術演算、集計操作のクエリ。JOINなどの複雑な操作は含まれないCPUバウンドのワークロード。</p>
+
+    <ul>
+      <li>
+        <p>MySQL</p>
+
+        <ul>
+          <li>
+            <p>実行時間: <code class="language-plaintext highlighter-rouge">100秒</code>で、タプルごとの処理の非効率性により、比較的長い。</p>
+          </li>
+          <li>
+            <p>処理の内訳: 実際の計算に10%、集計のためのハッシュテーブル管理に28%、レコードのコピーおよびナビゲーションに62%。</p>
+          </li>
+          <li>
+            <p>サイクルあたりの命令数 (IPC): 約0.8で、低い。</p>
+          </li>
+        </ul>
+      </li>
+      <li>
+        <p>X100</p>
+
+        <ul>
+          <li>
+            <p>実行時間: <code class="language-plaintext highlighter-rouge">20秒</code>で、比較敵短い。</p>
+          </li>
+          <li>
+            <p>処理の内訳: 計算に対する割合が大きい。ハッシュテーブルおよびレコードナビゲーションの操作が最小限に抑えられている。</p>
+          </li>
+          <li>
+            <p>IPC: 約2.0で、MySQLと比較して高い。</p>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="monet-dbに関するノート">Monet DBに関するノート</h2>
+
+<ul>
+  <li>
+    <p>縦断片化: 各列はBinary Association Table (BAT)として<code class="language-plaintext highlighter-rouge">[object_id, value]</code>の形式で保存される。</p>
+
+    <ul>
+      <li>
+        <p>削除: 削除リストにタプルIDを追加してマークする。</p>
+      </li>
+      <li>
+        <p>挿入: 別のデルタ列に追加して処理される。</p>
+      </li>
+      <li>
+        <p>更新: 削除と挿入の組み合わせとして実装される。</p>
+      </li>
+      <li>
+        <p>再編成: デルタ列がテーブル全体のサイズの小さな割合を超えると、デルタがメインストレージとマージされる。</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>列データの配列は<code class="language-plaintext highlighter-rouge">restrict</code>ポインターとして渡されるため、Cコンパイラはループパイプラインを生成し、配列データの処理を最適化する。</p>
+  </li>
+  <li>
+    <p><code class="language-plaintext highlighter-rouge">GROUP BY</code>はビット表現を使用して最適化され、集計結果の配列内で直接インデックスとして使用される。</p>
+  </li>
+</ul>
+
+      </div>
+    </main><footer class="site-footer h-card">
+  <data class="u-url" href="/jp/"></data>
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">yohei.codes</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col footer-col-1">
+        <ul class="contact-list">
+          <li class="p-name">yohei.codes</li><li><a class="u-email" href="mailto:me@yohei.codes">me@yohei.codes</a></li></ul>
+      </div>
+
+      <div class="footer-col footer-col-2"><ul class="social-media-list"><li><a href="https://github.com/ykskb"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#github"></use></svg> <span class="username">ykskb</span></a></li><li><a href="https://www.linkedin.com/in/yohei-kusakabe"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#linkedin"></use></svg> <span class="username">yohei-kusakabe</span></a></li><li><a href="https://www.twitter.com/yo__ohei"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#twitter"></use></svg> <span class="username">yo__ohei</span></a></li></ul>
+</div>
+
+      <div class="footer-col footer-col-3">
+        <p>I enjoy computer science stuff.</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+</body>
+
+</html>

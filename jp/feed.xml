@@ -1,0 +1,1307 @@
+<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" ><generator uri="https://jekyllrb.com/" version="3.10.0">Jekyll</generator><link href="https://yohei.codes/jp/feed.xml" rel="self" type="application/atom+xml" /><link href="https://yohei.codes/jp/" rel="alternate" type="text/html" /><updated>2024-09-13T16:22:32+00:00</updated><id>https://yohei.codes/feed.xml</id><title type="html">yohei.codes</title><subtitle>I enjoy computer science stuff.</subtitle><entry xml:lang="jp"><title type="html">論文：Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems</title><link href="https://yohei.codes/jp/2024/08/20/paper-fast-serializable-mvcc.html" rel="alternate" type="text/html" title="論文：Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems" /><published>2024-08-20T00:00:00+00:00</published><updated>2024-08-20T00:00:00+00:00</updated><id>https://yohei.codes/2024/08/20/paper-fast-serializable-mvcc</id><content type="html" xml:base="https://yohei.codes/2024/08/20/paper-fast-serializable-mvcc.html"><![CDATA[<h1 id="論文fast-serializable-multi-version-concurrency-control-for-main-memory-database-systems">論文：Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems</h1>
+
+<p>この記事は、<a href="https://db.in.tum.de/~muehlbau/papers/mvcc.pdf">Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems</a>という論文からのメモです。この論文は、2015年に発表されました。</p>
+
+<blockquote>
+  <h3 id="シリーズduckdbが採択した論文">シリーズ：DuckDBが採択した論文</h3>
+
+  <p>このシリーズは、<a href="https://duckdb.org/why_duckdb.html#standing-on-the-shoulders-of-giants">DuckDBが採用した論文</a>を読んだ際のメモをまとめたものです。</p>
+
+  <ul>
+    <li><a href="/jp/2024/08/16/paper-monet-db-x-100.html">ベクターベースのクエリエンジン</a></li>
+    <li>高速でSerializableなMVCC: 本記事</li>
+    <li>Join順序の最適化 （近日公開）</li>
+    <li>サブクエリ展開（近日公開）</li>
+  </ul>
+</blockquote>
+
+<h2 id="主な内容">主な内容</h2>
+
+<p>この論文は、データベースの並行処理制御についてのもので、主なMVCCがスナップショット分離レベル(<a href="https://en.wikipedia.org/wiki/Snapshot_isolation">SI</a>)を提供する中、シリアライザビリティを提供しつつ、オーバーヘッドとロックが少ないマルチバージョン並行性制御(<a href="https://en.wikipedia.org/wiki/Multiversion_concurrency_control">MVCC</a>)の実装を提案しています。</p>
+
+<p>アプローチとしては、トランザクションがデータを読み取る際にはスナップショットを使用するが、コミット時間軸で競合をチェックすることでシリアライザブルな分離レベルを提供するというものです。</p>
+
+<blockquote>
+  <p>DB分離レベル: スナップショット vs シリアライザブル</p>
+
+  <p>スナップショット分離レベルとシリアライザブル分離レベルを比較した記事は<a href="/jp/2023/09/07/snapshot-vs-serializable.html">こちら</a>。</p>
+
+  <p>あとDuckDBはこの論文のコンセプトをもとにMVCCを実装しているのは見られるのですが、シリアライザブルな分離レベルのコントロールは実装されてない気がします。確証を取るには至っていないのですが現時点のコードとGitHubのイシューで見る限りスナップショット分離レベルを提供してるっぽいです。まあOLAPなのでそれで十分なんだろうと思います。</p>
+</blockquote>
+
+<h2 id="バージョンのストレージと位置">バージョンのストレージと位置</h2>
+
+<ul>
+  <li>
+    <p>従来のMVCC: あちこちに存在するバージョン</p>
+
+    <ul>
+      <li>
+        <p>古いバージョンは破棄されず保持され、バックグラウンドプロセスによってクリーンアップされる。</p>
+      </li>
+      <li>
+        <p>DBMSのストレージは動的に割り当てられるため、書き込みのタイミングによって保存位置やページがバラバラになってしまう。</p>
+      </li>
+      <li>
+        <p>並行トランザクション間のデータ競合を最小限に抑えるため、新しいバージョンを異なるページに作成するよう実装されることがある。</p>
+      </li>
+      <li>
+        <p>リカバリのためにログが記録された後でバージョンが作成されるが、新しいバージョンは通常リカバリの際に元のバージョンを保持できるように、別のストレージ場所に作成される実装がされることがある。</p>
+      </li>
+      <li>
+        <p>利用可能なストレージの隙間をシステムが利用するため、データが時間とともに断片化され、バージョンが異なる場所に分散されることがある。</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>提案されたMVCC: 中央集約型バージョン管理</p>
+
+    <p>最新のデータはin-place（同じエントリ）に上書きされ、以前のバージョン（before-image）は巻き戻し用バッファに保管されます。</p>
+
+    <ul>
+      <li>
+        <p>DB全体に分散された複数のバージョンを管理する複雑さを軽減。</p>
+      </li>
+      <li>
+        <p>各コミットが成功するたびに、このコミット時間より前の不要なバージョンがクリーンアップされる。</p>
+      </li>
+      <li>
+        <p>キャッシュに適した形式でパフォーマンスを向上させる。</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<blockquote>
+  <p>直接言及があるわけではないが、この「あちこちに存在するバージョン」というのはPostgreSQLがいい例な気がします。</p>
+
+  <p>PostgreSQLは簡潔さや確実なデータ保存を優先するため、永続するデータのストレージに多数のバージョンを保存する設計がされています。この設計判断によって<a href="https://www.postgresql.org/docs/current/sql-vacuum.html"><code class="language-plaintext highlighter-rouge">VACUUM</code></a>が必要になったり、ある程度サイズの大きいテーブルからレコードの正確な数を数えるのが物凄くコストの高いオペレーションになってしまいます。なのでトランザクションのバージョンをデータのストレージではない所に保存するのはそういった副作用がないので理にかなっている気はします。</p>
+</blockquote>
+
+<h2 id="ロックの削減">ロックの削減</h2>
+
+<ul>
+  <li>
+    <p>従来のMVCC:</p>
+
+    <ul>
+      <li>
+        <p>他のトランザクションが更新しないよう行ロックが起きることがある。</p>
+      </li>
+      <li>
+        <p>バージョンの可視性を制御するために、ロックや類似のメカニズムが使用されることがある。</p>
+      </li>
+      <li>
+        <p>安定したデータを得るために、バージョンリストが読み取り中にロックされることがある。</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>提案されたMVCC:</p>
+
+    <p>バージョンの追加は巻き戻し用バッファ内のみで完結する。</p>
+
+    <ul>
+      <li>
+        <p>精密なロック: 更新される局所的な領域のみ。</p>
+
+        <p>変更は小さく特定のメモリ領域に限定される。</p>
+
+        <ul>
+          <li>
+            <p>ロック保持時間の短縮。</p>
+          </li>
+          <li>
+            <p>他のトランザクションは巻き戻し用バッファの別の部分を読み取ったり更新したりすることができる。</p>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="よりセレクティブなチェック">よりセレクティブなチェック</h2>
+
+<ul>
+  <li>
+    <p>従来のMVCC:</p>
+
+    <ul>
+      <li>
+        <p>コミット済みトランザクションだけでなく、コミットされていないトランザクションもチェックされることがある。</p>
+      </li>
+      <li>
+        <p>保守的なアプローチでは、変更だけでなく、読み取りもチェックされることがあります。これは、<a href="https://en.wikipedia.org/wiki/Snapshot_isolation#Definition">write skew anomaly</a>のようなシナリオに対応するため。</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">read-write</code>や<code class="language-plaintext highlighter-rouge">write-write</code>、さらには<code class="language-plaintext highlighter-rouge">read-read</code>のようなすべての競合タイプがチェックされることがある。</p>
+      </li>
+      <li>
+        <p>競合トランザクションのチェックはグローバルレベルで行われることがあり、これによりグローバルロックが発生することがある。</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>提案されたMVCC:</p>
+
+    <ul>
+      <li>
+        <p>進行中のトランザクションの読み取りに影響を与える可能性のある、コミット済みのトランザクションのみをチェックする。</p>
+      </li>
+      <li>
+        <p>コミット時に初めて主な競合検出を、より限定された範囲で行う。</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="効率的な検証と競合解決">効率的な検証と競合解決</h2>
+
+<ul>
+  <li>
+    <p>従来のMVCC:</p>
+
+    <ul>
+      <li>
+        <p>シリアライザビリティを確保するためにグローバルロックが必要になることがある。</p>
+      </li>
+      <li>
+        <p>タイムスタンプの利用:</p>
+
+        <ul>
+          <li>
+            <p>タイムスタンプの一意性を確保するためにアトミック操作が必要となり、待ち時間が発生する可能性がある。</p>
+          </li>
+          <li>
+            <p>比較プロセスが複雑になることがあり、システムは他の多数のトランザクションのタイムスタンプに対して読み取りおよび書き込み操作を検証する必要がある。</p>
+          </li>
+          <li>
+            <p>タイムスタンプを持つトランザクションがまだコミットされていない場合、それより後のタイムスタンプを持つトランザクションが待機を強いられることがあり、遅延が起きることがある。</p>
+          </li>
+          <li>
+            <p>ロールバックは、却下されたトランザクションによって行われたすべての変更を元に戻し、以前の状態を復元し、場合によってはトランザクションを再開始する必要がある。</p>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>提案されたMVCC:</p>
+
+    <ul>
+      <li>
+        <p>コミット完了時のタイムスタンプのみで競合をチェックすることでシリアライザビリティを検証する。</p>
+      </li>
+      <li>
+        <p>巻き戻し用ログ内のバージョンは変更部分（デルタ）のみのバージョンチェーン。</p>
+      </li>
+      <li>
+        <p>巻き戻し用ログ内のバージョンはIDとタイムスタンプでインデックスされる。</p>
+      </li>
+      <li>
+        <p>迅速なシリアライザビリティのために、トランスアクションのPredicate（述語）をログに記録し、新たなトランスアクションの衝突検証に使用する。</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h1 id="ベンチマーク">ベンチマーク</h1>
+
+<ul>
+  <li>
+    <p>TPC-C: 注文クエリの書き込み中心のベンチマーク（読み取りトランザクション8%、書き込みトランザクション92%）</p>
+
+    <ul>
+      <li>
+        <p>提案されたMVCC:</p>
+
+        <ul>
+          <li>
+            <p><code class="language-plaintext highlighter-rouge">100,000 TPS</code> (1秒あたりのトランザクション数)</p>
+          </li>
+          <li>
+            <p>単一バージョン並行制御と比較して約20%のパフォーマンスコスト</p>
+          </li>
+          <li>
+            <p>最大20コアまでリニアにスケールするが、それ以上ではグローバル同期を減らす必要がある。<a href="https://wzheng.github.io/silo.pdf">Silo</a>はこれを実装してる。</p>
+          </li>
+        </ul>
+      </li>
+      <li>
+        <p>2PL (two-phase locking) in HyPer: 5倍遅い</p>
+      </li>
+      <li>
+        <p>従来のMVCC: <code class="language-plaintext highlighter-rouge">50,000 TPS</code></p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>TATP: ポイントアクセスおよびレコード全体更新のベンチマーク（読み取りトランザクション80%、書き込みトランザクション20%）、通信アプリをシミュレート。</p>
+
+    <ul>
+      <li>
+        <p>提案されたMVCC: <code class="language-plaintext highlighter-rouge">407,564 TPS</code>は、単一バージョン制御と比較して最小限のオーバーヘッドで、従来のMVCCを上回る。</p>
+      </li>
+      <li>
+        <p>単一バージョン制御: <code class="language-plaintext highlighter-rouge">421,940 TPS</code></p>
+      </li>
+      <li>
+        <p>従来のMVCC: <code class="language-plaintext highlighter-rouge">340,715 TPS</code></p>
+      </li>
+    </ul>
+  </li>
+</ul>]]></content><author><name></name></author><summary type="html"><![CDATA[論文：Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://yohei.codes/assets/images/screenshot.png" /><media:content medium="image" url="https://yohei.codes/assets/images/screenshot.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="jp"><title type="html">論文：MonetDB/X100: Hyper-Pipelining Query Execution</title><link href="https://yohei.codes/jp/2024/08/16/paper-monet-db-x-100.html" rel="alternate" type="text/html" title="論文：MonetDB/X100: Hyper-Pipelining Query Execution" /><published>2024-08-16T00:00:00+00:00</published><updated>2024-08-16T00:00:00+00:00</updated><id>https://yohei.codes/2024/08/16/paper-monet-db-x-100</id><content type="html" xml:base="https://yohei.codes/2024/08/16/paper-monet-db-x-100.html"><![CDATA[<h1 id="論文monetdbx100-hyper-pipelining-query-execution">論文：MonetDB/X100: Hyper-Pipelining Query Execution</h1>
+
+<p>この記事は、<a href="http://cidrdb.org/cidr2005/papers/P19.pdf">「MonetDB/X100: Hyper-Pipelining Query Execution」</a>という論文からのメモです。この論文は、2005年に<a href="https://www.cidrdb.org/">The Conference on Innovative Data Systems Research (CIDR)</a>会議で発表されました。</p>
+
+<blockquote>
+  <h3 id="シリーズduckdbが採択した論文">シリーズ：DuckDBが採択した論文</h3>
+
+  <p>このシリーズは、<a href="https://duckdb.org/why_duckdb.html#standing-on-the-shoulders-of-giants">DuckDBが採用しいた論文</a>を読んだ際のメモをまとめたものです。</p>
+
+  <ul>
+    <li>ベクターベースのクエリエンジン: 本記事</li>
+    <li><a href="/jp/2024/08/20/paper-fast-serializable-mvcc.html">高速でSerializableなMVCC</a></li>
+    <li>Join順序の最適化 （近日公開）</li>
+    <li>サブクエリ展開（近日公開）</li>
+  </ul>
+
+  <p>Note: DuckDBはこの論文で説明されているベクターベースのクエリエンジンのアイデアを実装していますが、ストレージのモデルはMonet DBとは違っており、Monet DBがコラムごとに別々のファイルに保存するのに対し、DuckDBはRow Groupという列と行のハイブリッドモデルを採用しています。（<a href="https://duckdb.org/docs/internals/storage.html#row-groups">DuckDBへのリンクはこちら</a>）</p>
+</blockquote>
+
+<h2 id="主な内容">主な内容</h2>
+
+<p>この論文は、現代的なCPUをより効果的に活用するために、DBMSにおけるベクター化されたクエリ実行モデルを提案し、従来のVolcanoイテレータモデルと比較しています。</p>
+
+<ul>
+  <li>
+    <p>性能比較はTPC-Hベンチマークを使用して行われており、大規模なスキャン、結合、集計、ネストされたクエリを含む22の複雑なSQLクエリを評価しています。</p>
+  </li>
+  <li>
+    <p>論文には直接記載されていませんが、MonetDBはカラム指向のデータベースであり、比較されている従来のVolcanoモデルは行指向のデータベースであると推測されます。</p>
+  </li>
+</ul>
+
+<h2 id="クエリ解釈">クエリ解釈</h2>
+
+<ul>
+  <li>
+    <p>従来のモデル: Volcanoイテレータモデル = タプルごとに処理</p>
+
+    <p>各タプルはフィルタ、Join結合、集計などのさまざまな演算子を何度も通過する必要があり、解釈オーバーヘッドが発生し、CPUの並列処理の機会が限られてしまう。</p>
+  </li>
+  <li>
+    <p>提案されたモデル: ベクター化された処理</p>
+
+    <p>フィルタ、Join結合、集計などの操作をデータ全体のベクトルに一度に適用。</p>
+  </li>
+</ul>
+
+<h2 id="cpuキャッシュ">CPUキャッシュ</h2>
+
+<ul>
+  <li>
+    <p>従来のモデル: メモリにタプル全体を読み込む必要があるため、データがアクセスされるとき、未使用のデータもキャッシュラインを占有し、キャッシュミスが頻繁に発生。</p>
+  </li>
+  <li>
+    <p>提案されたモデル: 関連するデータのみをメモリに読み込む</p>
+
+    <ul>
+      <li>
+        <p>空間的局所性（Spacial locality）: 単一の列のデータがメモリに連続して格納されているため、キャッシュヒットが増え、連続したメモリアクセスが可能に。</p>
+      </li>
+      <li>
+        <p>時間的局所性（Temporal locality）: データがキャッシュに読み込まれると、次のチャンクが読み込まれる前にそのデータが繰り返し使用される。</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<p>例:</p>
+
+<ul>
+  <li>
+    <p>テーブル: <code class="language-plaintext highlighter-rouge">sale_id INT, date DATE, product_id INT, quantity INT, price FLOAT</code></p>
+  </li>
+  <li>
+    <p>クエリ: <code class="language-plaintext highlighter-rouge">SELECT SUM (quantity * price) AS total_revenue FROM sales;</code></p>
+  </li>
+  <li>
+    <p>キャッシュライン:</p>
+
+    <ul>
+      <li>
+        <p>行指向データベース: キャッシュラインに未使用の列が含まれる</p>
+
+        <p><code class="language-plaintext highlighter-rouge">[ sale_id | date | product_id | quantity | price | sale_id... ]</code></p>
+      </li>
+      <li>
+        <p>カラム指向データベース: 使用されるデータのみがキャッシュされる</p>
+
+        <p><code class="language-plaintext highlighter-rouge">[ quantity | quantity | quantity | quantity... ]</code></p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="cpuパイプラインの実行">CPUパイプラインの実行</h2>
+
+<ul>
+  <li>
+    <p>従来のモデル: タプルごとに処理 &amp; 行指向</p>
+
+    <ul>
+      <li>
+        <p>前述のように、頻繁なキャッシュミスのため、データが読み込まれる際にCPUがストールする。</p>
+      </li>
+      <li>
+        <p>各タプルごとに命令を繰り返しフェッチする必要がある (SIMDが使用されない)。</p>
+      </li>
+      <li>
+        <p>各タプルのIFやWHEREなどの条件により、ブランチミス予測が発生。</p>
+      </li>
+      <li>
+        <p>データ/制御ハザード = 命令の依存関係。命令を進める前に前の命令が完了するのを待つ必要が発生。</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>提案されたモデル: ベクター化された処理</p>
+
+    <ul>
+      <li>
+        <p>キャッシュミスが少ない = CPUのストールが少ない。</p>
+      </li>
+      <li>
+        <p>ベクター化されたデータはSIMDとよく一致し、データ処理を大幅に最適化。</p>
+      </li>
+      <li>
+        <p>命令間の依存関係が少ないか、まったくないため、CPUパイプラインが命令を効果的に計画し、実行することが可能。</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="ベンチマーク">ベンチマーク</h2>
+
+<ul>
+  <li>
+    <p>TPC-H Query 1: 大きなテーブルに対するスキャン、算術演算、集計操作のクエリ。JOINなどの複雑な操作は含まれないCPUバウンドのワークロード。</p>
+
+    <ul>
+      <li>
+        <p>MySQL</p>
+
+        <ul>
+          <li>
+            <p>実行時間: <code class="language-plaintext highlighter-rouge">100秒</code>で、タプルごとの処理の非効率性により、比較的長い。</p>
+          </li>
+          <li>
+            <p>処理の内訳: 実際の計算に10%、集計のためのハッシュテーブル管理に28%、レコードのコピーおよびナビゲーションに62%。</p>
+          </li>
+          <li>
+            <p>サイクルあたりの命令数 (IPC): 約0.8で、低い。</p>
+          </li>
+        </ul>
+      </li>
+      <li>
+        <p>X100</p>
+
+        <ul>
+          <li>
+            <p>実行時間: <code class="language-plaintext highlighter-rouge">20秒</code>で、比較敵短い。</p>
+          </li>
+          <li>
+            <p>処理の内訳: 計算に対する割合が大きい。ハッシュテーブルおよびレコードナビゲーションの操作が最小限に抑えられている。</p>
+          </li>
+          <li>
+            <p>IPC: 約2.0で、MySQLと比較して高い。</p>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="monet-dbに関するノート">Monet DBに関するノート</h2>
+
+<ul>
+  <li>
+    <p>縦断片化: 各列はBinary Association Table (BAT)として<code class="language-plaintext highlighter-rouge">[object_id, value]</code>の形式で保存される。</p>
+
+    <ul>
+      <li>
+        <p>削除: 削除リストにタプルIDを追加してマークする。</p>
+      </li>
+      <li>
+        <p>挿入: 別のデルタ列に追加して処理される。</p>
+      </li>
+      <li>
+        <p>更新: 削除と挿入の組み合わせとして実装される。</p>
+      </li>
+      <li>
+        <p>再編成: デルタ列がテーブル全体のサイズの小さな割合を超えると、デルタがメインストレージとマージされる。</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>列データの配列は<code class="language-plaintext highlighter-rouge">restrict</code>ポインターとして渡されるため、Cコンパイラはループパイプラインを生成し、配列データの処理を最適化する。</p>
+  </li>
+  <li>
+    <p><code class="language-plaintext highlighter-rouge">GROUP BY</code>はビット表現を使用して最適化され、集計結果の配列内で直接インデックスとして使用される。</p>
+  </li>
+</ul>]]></content><author><name></name></author><summary type="html"><![CDATA[論文：MonetDB/X100: Hyper-Pipelining Query Execution]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://yohei.codes/assets/images/screenshot.png" /><media:content medium="image" url="https://yohei.codes/assets/images/screenshot.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="jp"><title type="html">DuckDBが採択した論文</title><link href="https://yohei.codes/jp/2024/08/15/duckdb-papers.html" rel="alternate" type="text/html" title="DuckDBが採択した論文" /><published>2024-08-15T00:00:00+00:00</published><updated>2024-08-15T00:00:00+00:00</updated><id>https://yohei.codes/2024/08/15/duckdb-papers</id><content type="html" xml:base="https://yohei.codes/2024/08/15/duckdb-papers.html"><![CDATA[<h1 id="duckdbが採択した論文">DuckDBが採択した論文</h1>
+
+<p><a href="https://duckdb.org/">DuckDB</a>は分析クエリがかなり速いと思っているのですが、公式ドキュメントのページには<a href="https://duckdb.org/why_duckdb.html#standing-on-the-shoulders-of-giants">「Standing on the Shoulders of Giants」</a>というリストがあり、DuckDBが採択したもしくはインスパイアされた論文がリストアップされています。</p>
+
+<p>DuckDB自体、またはデータベースの内部構造の理解を深めるためにいくつかの文献を読んだので、そのメモを記事としてまとめました。追加すべきことや、理解が間違っている場合は遠慮なくご連絡ください。</p>
+
+<blockquote>
+  <h3 id="list-of-articles">List of Articles</h3>
+  <ul>
+    <li><a href="/jp/2024/08/16/paper-monet-db-x-100.html">ベクターベースのクエリエンジン (MonetDB/X100: Hyper-Pipelining Query Execution)</a></li>
+    <li><a href="/jp/2024/08/20/paper-fast-serializable-mvcc.html">高速でSerializableなMVCC</a></li>
+    <li>Join順序の最適化 （近日公開）</li>
+    <li>サブクエリ展開（近日公開）</li>
+  </ul>
+</blockquote>]]></content><author><name></name></author><summary type="html"><![CDATA[DuckDBが採択した論文]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://yohei.codes/assets/images/screenshot.png" /><media:content medium="image" url="https://yohei.codes/assets/images/screenshot.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="jp"><title type="html">DB分離レベル: スナップショット vs シリアライザブル</title><link href="https://yohei.codes/jp/2023/09/07/snapshot-vs-serializable.html" rel="alternate" type="text/html" title="DB分離レベル: スナップショット vs シリアライザブル" /><published>2023-09-07T00:00:00+00:00</published><updated>2023-09-07T00:00:00+00:00</updated><id>https://yohei.codes/2023/09/07/snapshot-vs-serializable</id><content type="html" xml:base="https://yohei.codes/2023/09/07/snapshot-vs-serializable.html"><![CDATA[<h1 id="db分離レベル-スナップショット-vs-シリアライザブル">DB分離レベル: スナップショット vs シリアライザブル</h1>
+
+<p>このページは自分がデータベース分離レベルを調べた際のメモを記事にしたものです。ここではスナップショット分離レベルとシリアライザブル分離レベルの違いにフォーカスしています。</p>
+
+<h2 id="ライトスキュー異常">ライトスキュー異常</h2>
+
+<p>スナップショット分離レベルとシリアライザブルな分離レベルを比較する時によく挙げられるのはライトスキュー異常と言われる現象で、スナップショット分離レベルモデルでは原理的に対応しないシナリオになる。これはスナップショット分離の衝突検知が同じレコードへの変更のみを対象にし、コミット時系列の並びを対象にしないことでパフォーマンスを出す仕様に起因する。よく使われる例は以下の通り。</p>
+
+<ul>
+  <li>
+    <p>当直のドクターを更新するトランザクション</p>
+
+    <ul>
+      <li>
+        <p>システムは当直のドクターが最低でも一人いることを保証する必要がある。</p>
+      </li>
+      <li>
+        <p>T1 (トランザクション1)は他に当直のドクターがいればドクターAの当直を取り消したい。</p>
+      </li>
+      <li>
+        <p>T2は他に当直のドクターがいればドクターBの当直を取り消したい。</p>
+      </li>
+      <li>
+        <p>T1とT2が時系列上オーバラップするタイミングで起きる。</p>
+      </li>
+    </ul>
+
+    <p>トランザクション動作：</p>
+
+    <ol>
+      <li>
+        <p>T1はDBのスナップショットからドクターA、ドクターB両方が当直であることを読む。</p>
+      </li>
+      <li>
+        <p>T2はDBのスナップショットからドクターA、ドクターB両方が当直であることを読む。</p>
+      </li>
+      <li>
+        <p>T1はドクターAの当直を消す更新をする。（成功する。）</p>
+      </li>
+      <li>
+        <p>T2はドクターBの当直を消す更新をする。（成功する。）</p>
+      </li>
+      <li>
+        <p>結果、システムの必要条項である最低でも一人の当直ドクターが保証されていない事態になる。</p>
+      </li>
+    </ol>
+  </li>
+</ul>
+
+<p>シリアライズ可能な分離レベルでは、時系列でのトランザクションの単一性を保証するため、T1もしくはT2のどちらか（先に始めた方）を成功させ、もう一つのトランザクションは、ロールバック＋リトライや先のトランザクションが終わるまでブロック後のリトライ、もしくはトランザクションを失敗させる。この例はread-write conflictと言われるタイプの衝突になる。</p>
+
+<p>勿論実装者がロックを適用するのもこの問題のメジャーな解決策の一つ。例えば<code class="language-plaintext highlighter-rouge">SELECT FOR UPDATE</code>は実行中のトランザクションが読み込んだデータを、トランザクションが終わるまで他のトランザクションから読めないようにロックする。上記の例ではT1がドクターAとドクターBの当直データを読んだ時点でT2からはそのデータをT1が終わるまで読むことができなくなる。これによりT2の読み込みが完了した時点でT1はコミット済みになり、T2はドクターAが当直をキャンセルしたことが読めるので、ドクターBの当直キャンセルの是非を判断することが可能となる。メジャーなDBでは大体<code class="language-plaintext highlighter-rouge">READ COMMITTED</code>か<code class="language-plaintext highlighter-rouge">REPEATABLE READ</code>がデフォルトの分離レベルなので、トランザクション実装にロックを考えずに書くとライトスキュー異常の可能性は排除できない。現実的な影響は以下の段落へ。</p>
+
+<h2 id="現実的な影響">現実的な影響</h2>
+
+<p><a href="https://en.wikipedia.org/wiki/Snapshot_isolation#Definition">Wikipediaの例</a>では、銀行のトランザクションが挙げられており、顧客が所有している複数の口座全てからほぼ同時に引き出しトランザクションを行うことで、残高より多い金額の引き出しが可能となるケースが説明されている。条件として顧客が複数の口座を所有している場合、残高のトータルが０以上であれば、特定の口座残高のマイナス（負債状態）が許される状態ではあるが、引き出し時のユーザー体験的に見た場合現実に十分あり得る設定と考えられる。口座所持者がそれぞれ残高<code class="language-plaintext highlighter-rouge">$100</code>の口座に<code class="language-plaintext highlighter-rouge">$200</code>を引き出すトランザクションを同時に発生させることで、<code class="language-plaintext highlighter-rouge">SELECT FOR UPDATE</code>などの対策が無い場合、スナップショット分離レベルのDBは両トランザクションを成功させてしまい、トータル残高は<code class="language-plaintext highlighter-rouge">-$200</code>となってしまう。</p>
+
+<p>一見これらの例は理論的な話に見えるかも知れないが実際に攻撃手法として使用されている例が報告されている。Stanford InfoLabのメンバーによる論文：「<a href="http://www.bailis.org/papers/acidrain-sigmod2017.pdf">ACIDRain: Concurrency-Related Attacks on
+Database-Backed Web Applications</a>」によるとビットコイン交換所が倒産する程のデータ崩壊やEコマースサイトへのギフトカードの超過額使用、商品インベントリデータの崩壊などの確認が報告されている。</p>]]></content><author><name></name></author><summary type="html"><![CDATA[DB分離レベル: スナップショット vs シリアライザブル]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://yohei.codes/assets/images/screenshot.png" /><media:content medium="image" url="https://yohei.codes/assets/images/screenshot.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="jp"><title type="html">スレッド、clone、futexとCMPXCHG</title><link href="https://yohei.codes/jp/2023/05/21/thread-clone-futex.html" rel="alternate" type="text/html" title="スレッド、clone、futexとCMPXCHG" /><published>2023-05-21T00:00:00+00:00</published><updated>2023-05-21T00:00:00+00:00</updated><id>https://yohei.codes/2023/05/21/thread-clone-futex</id><content type="html" xml:base="https://yohei.codes/2023/05/21/thread-clone-futex.html"><![CDATA[<h1 id="スレッドclonefutexとcmpxchg">スレッド、clone、futexとCMPXCHG</h1>
+
+<p>これは、スレッド（もしくはpthread）に関連するトピックについて、自分が過去に断続的に取ったメモのページです。理解を整理するためにまとめました。</p>
+
+<h2 id="pthreadの内部">pthreadの内部</h2>
+
+<p><a href="https://man7.org/linux/man-pages/man7/pthreads.7.html">pthreads</a>は<a href="https://man7.org/linux/man-pages/man2/clone.2.html"><code class="language-plaintext highlighter-rouge">clone</code></a>を呼び出す。これにより<code class="language-plaintext highlighter-rouge">task_struct</code>が作成される。</p>
+
+<blockquote>
+  <p>メモ:</p>
+
+  <ul>
+    <li>
+      <p>pthread（POSIXスレッド）はlibcの一部。ほとんどのLinuxではglibc（GNU Cライブラリ）によって実装されている。</p>
+    </li>
+    <li>
+      <p>ユーザー空間で実装され、<code class="language-plaintext highlighter-rouge">clone()</code>や<a href="https://man7.org/linux/man-pages/man2/futex.2.html"><code class="language-plaintext highlighter-rouge">futex</code></a>などのシステムコールを通じてカーネルとやり取りする。</p>
+    </li>
+    <li>
+      <p><a href="https://man7.org/linux/man-pages/man2/fork.2.html"><code class="language-plaintext highlighter-rouge">fork()</code></a>も<code class="language-plaintext highlighter-rouge">clone()</code>を呼び出すが、異なるパラメータでの呼び出しになる。</p>
+    </li>
+  </ul>
+</blockquote>
+
+<ul>
+  <li>
+    <p><code class="language-plaintext highlighter-rouge">clone()</code>には次のような異なるフラグが存在する：</p>
+
+    <ul>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_VM</code>: メモリ空間（<code class="language-plaintext highlighter-rouge">fork()</code>はメモリ空間を共有しない）</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_FS</code>: ファイルシステム</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_FILES</code>: ファイルディスクリプタ</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_SIGHAND</code>: シグナルハンドラ</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_THREAD</code>: スレッド</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_PARENT_SETTID</code>:</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_CHILD_CLEARTID</code>:</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<blockquote>
+  <p>メモ: libc vs カーネルのシステムコール</p>
+
+  <p>カーネルのシステムコールは移植性と安全性のためにlibcが標準インターフェイスとなる。<code class="language-plaintext highlighter-rouge">man 2 [名前]</code>はカーネルのシステムコールを説明し、<code class="language-plaintext highlighter-rouge">man 3 [名前]</code>はlibcの関数を説明するが、<code class="language-plaintext highlighter-rouge">man 2</code>でもライブラリセクションにlibcが表示されることが多い。</p>
+
+  <p>libc関数が単なるラッパーか、システムコールの上にさらにロジックを持っているかを調べるためには、その関数の内部や知識が必要。しかし、関数が<code class="language-plaintext highlighter-rouge">man 3</code>にしか存在しない場合、それはlibcの中でシステムコールをラップしているカスタム関数であることが分かる。</p>
+</blockquote>
+
+<h2 id="カーネルの観点">カーネルの観点</h2>
+
+<p>プロセスとスレッドの両方は、カーネル内で<code class="language-plaintext highlighter-rouge">task_struct</code>として扱われる。</p>
+
+<ul>
+  <li>
+    <p>スケジューリング: 統一タスクスケジューリング</p>
+
+    <p>カーネルはプロセスとスレッドを異なる方法でスケジュールしない。</p>
+
+    <ul>
+      <li>
+        <p>プリエンプティブマルチタスキング: OSはスレッド間で中断し、切り替えを行うことができる。（OSはハードウェアのタイマー割り込みを使用。）</p>
+      </li>
+      <li>
+        <p>マルチタスキングの基準:</p>
+
+        <ul>
+          <li>
+            <p>タイムスライス（クォンタム）</p>
+          </li>
+          <li>
+            <p>I/O操作</p>
+          </li>
+          <li>
+            <p>優先順位</p>
+          </li>
+        </ul>
+      </li>
+      <li>
+        <p>完全公平スケジューラ（CFS）がデフォルト。リアルタイムのための他のポリシーとして、<code class="language-plaintext highlighter-rouge">SCHED_FIFO</code>と<code class="language-plaintext highlighter-rouge">SCHED_RR</code>なども存在。</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>スレッドの状態（レジスタ、プログラムカウンタ、スタックポインタなど）は<code class="language-plaintext highlighter-rouge">スレッド制御ブロック（TCB）</code>として保存され、プロセスの状態は<code class="language-plaintext highlighter-rouge">プロセス制御ブロック（PCB）</code>として保存される。</p>
+  </li>
+  <li>
+    <p>スレッドとプロセスの違い:</p>
+
+    <ul>
+      <li>
+        <p>スレッドの<code class="language-plaintext highlighter-rouge">task_struct</code>はプロセスのスレッドグループの一部となる。</p>
+      </li>
+      <li>
+        <p>スレッドの構造体は共有リソースを指す。</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="カーネルスケジュールの制御">カーネルスケジュールの制御</h2>
+
+<ul>
+  <li>
+    <p>CPUアフィニティ: スレッド/プロセスが実行できるCPUコアを決定します。</p>
+
+    <p>スレッドを特定のコアにバインドし、コンテキストスイッチを減少させ、キャッシュ利用効率を向上させる為に使用。</p>
+
+    <ul>
+      <li>
+        <p><a href="https://man7.org/linux/man-pages/man2/sched_setaffinity.2.html"><code class="language-plaintext highlighter-rouge">sched_setaffinity(pid, cpusetsize, mask)</code></a></p>
+      </li>
+      <li>
+        <p><a href="https://linux.die.net/man/2/sched_getaffinity"><code class="language-plaintext highlighter-rouge">sched_getaffinity(pid, cpusetsize, mask)</code></a></p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>ポリシー: 異なるポリシーを設定できる。</p>
+
+    <p><a href="https://man7.org/linux/man-pages/man2/sched_setscheduler.2.html"><code class="language-plaintext highlighter-rouge">sched_setscheduler(pid, policy, param)</code></a> と<code class="language-plaintext highlighter-rouge">sched_getscheduler(pid)</code></p>
+
+    <ul>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">SCHED_OTHER</code>: デフォルトのLinuxタイムシェアリングスケジューラ</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">SCHED_FIFO</code>: 先入れ先出しのリアルタイムスケジューリング</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">SCHED_RR</code>: ラウンドロビンのリアルタイムスケジューリング</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">SCHED_IDLE</code>: バックグラウンドタスク用の非常に低い優先度</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">SCHED_BATCH</code>: バッチ処理ジョブに適した設定</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>優先順位: 優先順位も設定できる。</p>
+
+    <p><a href="https://linux.die.net/man/2/setpriority"><code class="language-plaintext highlighter-rouge">setpriority(which, who, priority)</code></a> と<code class="language-plaintext highlighter-rouge">getpriority(which, who)</code></p>
+
+    <ul>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">type</code>: <code class="language-plaintext highlighter-rouge">PRIO_PROCESS</code>など</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">who</code>: 識別子</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">priority</code>: 新しい優先度の値</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>コマンド:</p>
+
+    <p><code class="language-plaintext highlighter-rouge">nice</code>と<code class="language-plaintext highlighter-rouge">renice</code>は優先度を変更する。</p>
+
+    <ul>
+      <li>値は<code class="language-plaintext highlighter-rouge">-20</code>（最も高い優先度）から<code class="language-plaintext highlighter-rouge">19</code>（最も低い優先度）の範囲。</li>
+    </ul>
+  </li>
+  <li>
+    <p>pthread:</p>
+
+    <ul>
+      <li>
+        <p><a href="https://man7.org/linux/man-pages/man3/pthread_setschedparam.3.html"><code class="language-plaintext highlighter-rouge">pthread_setschedparam</code></a> と<code class="language-plaintext highlighter-rouge">pthread_getschedparam</code>: スケジューリングポリシーとパラメタ</p>
+      </li>
+      <li>
+        <p><a href="https://man7.org/linux/man-pages/man3/pthread_attr_setschedpolicy.3.html"><code class="language-plaintext highlighter-rouge">pthread_attr_setschedpolicy</code></a> と<code class="language-plaintext highlighter-rouge">pthread_attr_setschedparam</code>: スレッドの属性</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="ユーザーレベルスレッド">ユーザーレベルスレッド</h2>
+
+<ul>
+  <li>
+    <p>コルーチン: 実行を一時停止し、後で再開できる関数。Python（async/await）、Kotlin、Luaで一般的。</p>
+  </li>
+  <li>
+    <p>ファイバー: コルーチンに似ているが、一般的により汎用的。RubyやC++にライブラリあり。</p>
+  </li>
+  <li>
+    <p><code class="language-plaintext highlighter-rouge">m:n</code>スレッド: <code class="language-plaintext highlighter-rouge">m</code>個のユーザーレベルスレッドがそれより少数の<code class="language-plaintext highlighter-rouge">n</code>個のカーネルスレッドにマッピングされます。</p>
+
+    <ul>
+      <li>
+        <p>利点: 柔軟性 / <code class="language-plaintext highlighter-rouge">n</code>を調整可能 / コンテキストスイッチなし / ブロッキング操作を避ける処理可能</p>
+      </li>
+      <li>
+        <p>欠点: 複雑 / デバッグ / 限定的なOSサポート（LinuxとWindowsは<code class="language-plaintext highlighter-rouge">1:1</code>スレッドモデルを使用）</p>
+      </li>
+      <li>
+        <p>OSレベル: 単純化そして効率化のためほとんど<code class="language-plaintext highlighter-rouge">1:1</code>（古いSolarisとGNU Portable Threadsは<code class="language-plaintext highlighter-rouge">m:n</code>マッピングを提供）</p>
+      </li>
+      <li>
+        <p>例:</p>
+
+        <ul>
+          <li>
+            <p>Go: <code class="language-plaintext highlighter-rouge">goroutines</code>は少数のOSスレッドにスケジュールされる。</p>
+          </li>
+          <li>
+            <p>Erlang: BEAM仮想マシンを通じて、軽量プロセスは少数のOSスレッドにスケジュールされる。</p>
+          </li>
+          <li>
+            <p>NodeJS: モデルは違うが、イベントループ（イベント駆動アーキテクチャ）を通じて少数のスレッドで複数のタスクが並行して処理される。</p>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<blockquote>
+  <p><code class="language-plaintext highlighter-rouge">1:1</code>モデルのみの言語</p>
+
+  <p>JavaやRustは<code class="language-plaintext highlighter-rouge">m:n</code>やグリーンスレッドのモデルを言語として提供せず、<code class="language-plaintext highlighter-rouge">1:1</code>のOSネイティブなスレッドの呼び出しのみを言語としてサポートする。</p>
+
+  <p>それに伴いこれらの言語では<code class="language-plaintext highlighter-rouge">m:n</code>、グリーンスレッドやファイバーの機能は言語サポート外のライブラリとして実装、提供される。</p>
+</blockquote>
+
+<h2 id="同期機構">同期機構</h2>
+
+<p>複数のスレッドがある場合、競合を処理する必要あり。pthreadは<code class="language-plaintext highlighter-rouge">ミューテックス</code>、<code class="language-plaintext highlighter-rouge">条件変数</code>、<code class="language-plaintext highlighter-rouge">セマフォ</code>などの同期プリミティブを提供。</p>
+
+<ul>
+  <li>
+    <p><strong>Mutex</strong> (<code class="language-plaintext highlighter-rouge">pthread_mutex_t</code>): 一度に1つのスレッドのみが特定のコード（メモリ）にアクセスできるようにする。</p>
+
+    <ul>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">futex</code>を使用。</p>
+      </li>
+      <li>
+        <p>所有権がある: ロックの所有者スレッドだけが更新できる。</p>
+      </li>
+      <li>
+        <p>実装: 内部ステート（カーネルまたはOSがスレッドのblockとwakeupのメカニズムを提供）</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p><strong>Condition variable</strong> (<code class="language-plaintext highlighter-rouge">pthread_cond_t</code>): 特定の条件が満たされるまでスレッドをブロックする。通常はミューテックスと組み合わせて使用される。</p>
+
+    <ul>
+      <li>関連するミューテックスを解放し、<code class="language-plaintext highlighter-rouge">futex</code>を使用して他のスレッドからのシグナルやブロードキャストを待つ。</li>
+    </ul>
+  </li>
+  <li>
+    <p><strong>Semaphore</strong> (<code class="language-plaintext highlighter-rouge">sem_t</code>): 共有リソースへのアクセスを制御。</p>
+
+    <ul>
+      <li>
+        <p>ミューテックスに似ていて、セマフォカウントがゼロであり、スレッドがそれを減少させようとすると、スレッドは<code class="language-plaintext highlighter-rouge">futex</code>を使用して待機する。カウントが増加すると、<code class="language-plaintext highlighter-rouge">futex</code>を使用して待機しているスレッドの1つを起こす。</p>
+      </li>
+      <li>
+        <p>所有権なし：どのスレッドからでも変更可能。</p>
+      </li>
+      <li>
+        <p>使用例: リソースプール（例: DB接続プール）/ producer/consumerの可用性管理</p>
+      </li>
+      <li>
+        <p>実装: カウンタ + キュー</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="futex">Futex</h2>
+
+<p>“Fast userspace mutex”の略。競合が発生した場合のみ、futexはカーネルとやり取りする。</p>
+
+<blockquote>
+  <p>メモ:</p>
+
+  <p><code class="language-plaintext highlighter-rouge">futex</code>はカーネルの関与を最小限に抑えるように設計されているため、一見カーネルの一部ではないように見えるが、実際にはカーネルの構成要素。</p>
+</blockquote>
+
+<ul>
+  <li>
+    <p>高速パス: ミューテックスが解放されている→ロックが取得される（ユーザー空間のみ）</p>
+  </li>
+  <li>
+    <p>遅延パス: ミューテックスが解放されていない→スレッドがシステムコールを行い、カーネルはミューテックスが解除されるまでスレッドをスリープさせる。</p>
+  </li>
+  <li>
+    <p><code class="language-plaintext highlighter-rouge">futex</code>は、スレッドを効率的にスリープさせ、ウェイクアップするメカニズムを提供し、カーネルが待機キューを管理する。</p>
+
+    <ul>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">futex_wait</code>: スレッドがfutex変数（通常は特定のメモリ位置）を待っていることを示すために使用される。条件が満たされていない場合（例: ロックが既に保持されている場合）、カーネルはスレッドをスリープさせる。</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">futex_wake</code>: futex変数を待機している1つまたは複数のスレッドを起こすために使用される。ロックが解除されたり条件が変わったりしたとき、futex_wakeを使用して待機中のスレッドに通知し、それによってスレッドが実行を続ける。</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>コンペア・アンド・スワップ（CAS）: ロック取得に使用されるアトミック操作。</p>
+
+    <ul>
+      <li>
+        <p>X86/64: <code class="language-plaintext highlighter-rouge">EAX</code>, <code class="language-plaintext highlighter-rouge">EBX</code>, <code class="language-plaintext highlighter-rouge">ECX</code>（汎用レジスタ）または<code class="language-plaintext highlighter-rouge">RAX</code>, <code class="language-plaintext highlighter-rouge">RBX</code>, <code class="language-plaintext highlighter-rouge">RCX</code>（64ビット汎用レジスタ）などを使い、<code class="language-plaintext highlighter-rouge">CMPXCHG destination, source</code>の命令。</p>
+      </li>
+      <li>
+        <p>Arm: 汎用レジスタ（例: <code class="language-plaintext highlighter-rouge">r0</code>, <code class="language-plaintext highlighter-rouge">r1</code>, etc.）上で<code class="language-plaintext highlighter-rouge">LDREX</code>（ロード専用）および<code class="language-plaintext highlighter-rouge">STREX</code>（ストア専用）の命令。</p>
+
+        <pre><code class="language-asm">  LDREX r0, [address]      ; 'address'の値を'r0'にロード
+  CMP r0, old_value        ; ロードした値を'old_value'と比較
+  STREXEQ r1, new_value, [address] ; 等しい場合、'new_value'を'address'にアトミックに格納
+</code></pre>
+      </li>
+    </ul>
+  </li>
+</ul>]]></content><author><name></name></author><summary type="html"><![CDATA[スレッド、clone、futexとCMPXCHG]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://yohei.codes/assets/images/screenshot.png" /><media:content medium="image" url="https://yohei.codes/assets/images/screenshot.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="jp"><title type="html">文字列に効く動的計画法: 正規表現チェック</title><link href="https://yohei.codes/jp/2023/02/06/dp-regex.html" rel="alternate" type="text/html" title="文字列に効く動的計画法: 正規表現チェック" /><published>2023-02-06T00:00:00+00:00</published><updated>2023-02-06T00:00:00+00:00</updated><id>https://yohei.codes/2023/02/06/dp-regex</id><content type="html" xml:base="https://yohei.codes/2023/02/06/dp-regex.html"><![CDATA[<h1 id="文字列に効く動的計画法-正規表現チェック">文字列に効く動的計画法: 正規表現チェック</h1>
+
+<p>この記事は「<a href="/jp/2023/02/02/dp-for-string-metrics.md">文字列に効く動的計画法</a>」シリーズの正規表現チェックに関する記事です。</p>
+
+<blockquote>
+  <h3 id="文字列の為の動的計画法">文字列の為の動的計画法</h3>
+
+  <p>動的計画法(DP)は複雑な問題をより小さく単純な部分問題に分割し解決する手法です。その中には文字列メトリクスに対して効果的なパターンもいくつかあり、このシリーズはそれらに関する私のまとめノートです。何か追加すべきものがあると思われる場合は、お気軽にお問い合わせください。</p>
+
+  <ul>
+    <li><a href="/jp/2023/02/03/dp-levenshtein.html">レーベンシュタイン距離</a></li>
+    <li><a href="/jp/2023/02/05/dp-lcs.html">最長共通部分列(LCS)</a></li>
+    <li>正規表現チェック: この記事です。</li>
+    <li>Distinct Subsequence (coming soon)</li>
+    <li>Longest Repeating Subsequence (coming soon)</li>
+    <li>Hamming Distance (coming soon)</li>
+  </ul>
+</blockquote>
+
+<h2 id="dp-を使った正規表現チェック">DP を使った正規表現チェック</h2>
+
+<p>この問題は動的プログラミングを使って正規表現のマッチをチェックする問題です。正規表現といっても正確には文字の一致に加え「.」と「*」のパターンだけを含む簡素化されたものであり、実際の正規表現はより多くの構文をサポートしており、実装はより複雑です。</p>
+
+<p>以下、パターン文字の説明です：</p>
+
+<ul>
+  <li>文字 = リテラルマッチ</li>
+  <li><code class="language-plaintext highlighter-rouge">.</code> = 任意の文字</li>
+  <li><code class="language-plaintext highlighter-rouge">*</code> = 一文字前の表現の 0 回以上の繰り返し（<code class="language-plaintext highlighter-rouge">+</code>は 1 回以上、<code class="language-plaintext highlighter-rouge">?</code>は 0 または 1 回）</li>
+</ul>
+
+<p>リテラル文字のマッチングは、文字が正確な位置と順序にある必要があります。例えば、メタ記号のないパターン<code class="language-plaintext highlighter-rouge">abc</code>に一致する文字列は<code class="language-plaintext highlighter-rouge">abc</code>だけです。<code class="language-plaintext highlighter-rouge">.</code>の記号は任意の文字に一致します。この問題の中で少し特殊なのは<code class="language-plaintext highlighter-rouge">*</code>の記号です。<code class="language-plaintext highlighter-rouge">*</code>は一つ前の文字の繰り返しにマッチしますが、「一つ前の文字が一切ない（0 回起きる）」という状態もマッチします。例えば、<code class="language-plaintext highlighter-rouge">abcccd</code>という文字列がある場合、<code class="language-plaintext highlighter-rouge">abc*d</code>が一致するのは分かりやすい例ですが、<code class="language-plaintext highlighter-rouge">abc*de*</code>も一致します（<code class="language-plaintext highlighter-rouge">e*</code>は<code class="language-plaintext highlighter-rouge">e</code>が 0 回存在することもマッチするためです。）</p>
+
+<h3 id="dp-テーブル">DP テーブル</h3>
+
+<p>以下の表では、上部に水平にマップされた<code class="language-plaintext highlighter-rouge">a.c*de*</code>が正規表現パターン、左側に縦にマップされた<code class="language-plaintext highlighter-rouge">abcccd</code>がパターンに比較される文字列となります。空の文字を基本ケースとして定義しますので、文字マッチでは<code class="language-plaintext highlighter-rouge">[0, 0]</code>だけが<code class="language-plaintext highlighter-rouge">true</code>で、最初の行と列の残りのセルはすべて<code class="language-plaintext highlighter-rouge">false</code>になります。</p>
+
+<p>各セルを<code class="language-plaintext highlighter-rouge">[1, 1]</code>の位置から右方向へ各行見ていきます。セル毎にパターン文字と対象文字を比較し、2 つの文字が一致する場合、セルを左上からの値で更新します。パターン文字が<code class="language-plaintext highlighter-rouge">.</code>である場合も同様 になります（任意の文字に一致するため）。この対角線方向に動く真偽値の繋がりがパターンマッチが有効かどうかを表し、この DP の結果となります。<code class="language-plaintext highlighter-rouge">*</code>のパターン文字には、異なる角度の検証が必要になります。まず現在見ているセルから 2 つ左の DP 値が必要です。これは前述した様に<code class="language-plaintext highlighter-rouge">*</code>が「一つ前の文字が一切無い（0 回起きる）」という状態を反映するためです。実はこの更新は一つ前の文字が実際の文字列に存在する場合にも重要な効果を発揮します。一つ前の文字の繰り返しが実際に起こった場合、一つ上の値で現在のセルを更新します。これは、繰り返しのパターン（例えば<code class="language-plaintext highlighter-rouge">c*</code>）の直前までマッチしている場合にのみ現在のセルが<code class="language-plaintext highlighter-rouge">true</code>になり、それがパターン全体のマッチ結果に繋がるわけです。そして最終的に一番右下のセルが結果となります。</p>
+
+<p><img src="/assets/images/dp-regex.png" style="background-color: #FFF;" />
+<!-- ![dp-regex-table](/image/dp-regex.png) --></p>
+
+<p>上記の DP テーブルがこの問題のメインロジックですが、実は別で検証すべきコーナーケースがあります。パターンが<code class="language-plaintext highlighter-rouge">a*</code>や<code class="language-plaintext highlighter-rouge">a*b*c*</code>のような繰り返しのマッチ表現のみを持つ場合、上記の DP テーブルで縦に更新した<code class="language-plaintext highlighter-rouge">true</code>の値が存在しなくなってしまいます。これは繰り返しのパターンの前に文字が無い為に起こります。このコーナーケースは DP テーブル全行を更新し始める前に、最初の行飲みを対象に 0 回出現のチェックをすることで解決できます。</p>
+
+<h3 id="実装">実装</h3>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">regex</span><span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="n">pattern</span><span class="p">):</span>
+    <span class="n">slen</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="n">plen</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">pattern</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="n">dp</span> <span class="o">=</span> <span class="p">[[</span><span class="bp">False</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">plen</span><span class="p">)]</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">slen</span><span class="p">)]</span>
+    <span class="n">dp</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="bp">True</span>
+
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">plen</span><span class="p">):</span>  <span class="c1"># handles sequential pattern in the first row
+</span>        <span class="k">if</span> <span class="n">pattern</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s">'*'</span><span class="p">:</span>
+            <span class="n">dp</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">dp</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="n">i</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span>
+
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">slen</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">plen</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">pattern</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s">'.'</span> <span class="ow">or</span> <span class="n">pattern</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="n">s</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]:</span>  <span class="c1"># '.' or char match
+</span>                <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>  <span class="c1"># diagnal update
+</span>            <span class="k">elif</span> <span class="n">pattern</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s">'*'</span><span class="p">:</span>  <span class="c1"># sequence pattern
+</span>                <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span>  <span class="c1"># update for 0 occurence
+</span>                <span class="k">if</span> <span class="n">pattern</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span> <span class="o">==</span> <span class="s">'.'</span> <span class="ow">or</span> <span class="n">pattern</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span> <span class="o">==</span> <span class="n">s</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]:</span>  <span class="c1"># match before sequence pattern
+</span>                    <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="p">]</span>  <span class="c1"># vertical update
+</span>
+    <span class="k">return</span> <span class="n">dp</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+</code></pre></div></div>]]></content><author><name></name></author><summary type="html"><![CDATA[文字列に効く動的計画法: 正規表現チェック]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://yohei.codes/assets/images/dp-regex.png" /><media:content medium="image" url="https://yohei.codes/assets/images/dp-regex.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="jp"><title type="html">文字列に効く動的計画法: 最長共通部分列(LCS)</title><link href="https://yohei.codes/jp/2023/02/05/dp-lcs.html" rel="alternate" type="text/html" title="文字列に効く動的計画法: 最長共通部分列(LCS)" /><published>2023-02-05T00:00:00+00:00</published><updated>2023-02-05T00:00:00+00:00</updated><id>https://yohei.codes/2023/02/05/dp-lcs</id><content type="html" xml:base="https://yohei.codes/2023/02/05/dp-lcs.html"><![CDATA[<h1 id="文字列に効く動的計画法-最長共通部分列lcs">文字列に効く動的計画法: 最長共通部分列(LCS)</h1>
+
+<p>この記事は「<a href="/jp/2020/06/18/xv6-memory-1.html">文字列に効く動的計画法</a>」シリーズの最長共通部分列(LCS)に関する記事です。</p>
+
+<blockquote>
+  <h3 id="文字列に効く動的計画法">文字列に効く動的計画法</h3>
+
+  <p>動的計画法(DP)は複雑な問題をより小さく単純な部分問題に分割し解決する手法です。その中には文字列メトリクスに対して効果的なパターンもいくつかあり、このシリーズはそれらに関する私のまとめノートです。何か追加すべきものがあると思われる場合は、お気軽にお問い合わせください。</p>
+
+  <ul>
+    <li><a href="/jp/2023/02/03/dp-levenshtein.html">レーベンシュタイン距離</a></li>
+    <li>最長共通部分列(LCS): この記事です。</li>
+    <li><a href="/jp/2023/02/06/dp-regex.html">正規表現チェック</a></li>
+    <li>Distinct Subsequence (coming soon)</li>
+    <li>Longest Repeating Subsequence (coming soon)</li>
+    <li>Hamming Distance (coming soon)</li>
+  </ul>
+</blockquote>
+
+<h2 id="最長共通部分列">最長共通部分列</h2>
+
+<p>最長共通部分列(LCS)問題のアルゴリズムは文字列のあいまい検索や<code class="language-plaintext highlighter-rouge">diff</code>コマンド等で使われており、（通常）二つの文字列間で共通している最長の部分列を見つけ出します。この時部分列は連続した共通の文字列である必要はなく、間に他の文字列が入っていてもカウントされますが、比較される文字列の順番は守られる必要があります。例としては、<code class="language-plaintext highlighter-rouge">ABCD</code>と<code class="language-plaintext highlighter-rouge">ACBD</code>間の最長共通部分列は<code class="language-plaintext highlighter-rouge">3</code>であり、それは<code class="language-plaintext highlighter-rouge">ABD</code>か<code class="language-plaintext highlighter-rouge">ACD</code>のどちらかのカウントとなります。</p>
+
+<h3 id="dp-テーブル">DP テーブル</h3>
+
+<p>以下の表では、「stone」（左側に縦にマップされたもの）と「longest」（上部に水平にマップされたもの）が比較されています。LCS では、基本ケースを文字ではないもの（ε）と定義しますので、最初の行と最初の列の値は全て 0 にします。</p>
+
+<p><code class="language-plaintext highlighter-rouge">[1,1]</code>の位置から 2 つの文字を比較し、左から各セルを各行チェックしていきます。文字が同一である場合、左上のセルから 1 つの数字を増やし、その値でセルを更新します。同一でない場合、この時点までのベストな値を使用します。ベストな値とは上か左のセルのどちらか大きい方になります。そして一番右下の値が結果になります。</p>
+
+<p><img src="/assets/images/lcs.png" style="background-color: #FFF;" />
+<!-- ![lcs](/image/lcs.png) --></p>
+
+<h3 id="実装">実装</h3>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">lcs</span><span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="n">target</span><span class="p">):</span>
+    <span class="n">slen</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>  <span class="c1"># +1 for empty string
+</span>    <span class="n">tlen</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">target</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="n">dp</span> <span class="o">=</span> <span class="p">[[</span><span class="mi">0</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">tlen</span><span class="p">)]</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">slen</span><span class="p">)]</span>  <span class="c1"># DP table creation
+</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">slen</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">tlen</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">s</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="n">target</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]:</span>  <span class="c1"># if characters are identical, increment number from left top
+</span>                <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="mi">1</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="p">],</span> <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>  <span class="c1"># if not, use the best value either from top of left
+</span>
+    <span class="k">return</span> <span class="n">dp</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+</code></pre></div></div>
+
+<h3 id="notes">Notes</h3>
+
+<p>LCS は測定値のみを返します。そのため、測定値ではなく共通文字列自体が欲しい場合、それを取得するための別の式が必要になります。これは、LCS 関数で作成された DP テーブルを使用して、右下のセルから最大の数字をトラックして文字を集めることで可能になります。</p>]]></content><author><name></name></author><summary type="html"><![CDATA[文字列に効く動的計画法: 最長共通部分列(LCS)]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://yohei.codes/assets/images/lcs.png" /><media:content medium="image" url="https://yohei.codes/assets/images/lcs.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="jp"><title type="html">文字列に効く動的計画法: レーベンシュタイン距離</title><link href="https://yohei.codes/jp/2023/02/03/dp-levenshtein.html" rel="alternate" type="text/html" title="文字列に効く動的計画法: レーベンシュタイン距離" /><published>2023-02-03T00:00:00+00:00</published><updated>2023-02-03T00:00:00+00:00</updated><id>https://yohei.codes/2023/02/03/dp-levenshtein</id><content type="html" xml:base="https://yohei.codes/2023/02/03/dp-levenshtein.html"><![CDATA[<h1 id="文字列に効く動的計画法-レーベンシュタイン距離">文字列に効く動的計画法: レーベンシュタイン距離</h1>
+
+<p>この記事は「<a href="/jp/2020/06/18/xv6-memory-1.html">文字列に効く動的計画法</a>」シリーズのレーベンシュタイン距離に関する記事です。</p>
+
+<blockquote>
+  <h3 id="文字列の為の動的計画法">文字列の為の動的計画法</h3>
+
+  <p>動的計画法(DP)は複雑な問題をより小さく単純な部分問題に分割し解決する手法です。その中には文字列メトリクスに対して効果的なパターンもいくつかあり、このシリーズはそれらに関する私のまとめノートです。何か追加すべきものがあると思われる場合は、お気軽にお問い合わせください。</p>
+
+  <ul>
+    <li>レーベンシュタイン距離: この記事です。</li>
+    <li><a href="/jp/2023/02/05/dp-lcs.html">最長共通部分列(LCS)</a></li>
+    <li><a href="/jp/2023/02/06/dp-regex.html">正規表現</a></li>
+    <li>Distinct Subsequence (coming soon)</li>
+    <li>Longest Repeating Subsequence (coming soon)</li>
+    <li>Hamming Distance (coming soon)</li>
+  </ul>
+</blockquote>
+
+<h2 id="レーベンシュタイン距離">レーベンシュタイン距離</h2>
+
+<p>レーベンシュタイン距離はスペルチェックや文字列のあいまい検索に利用されており、以下のような状況の測定値を返します：</p>
+
+<p>    <em>文字列 A とターゲット文字列 B があります。文字列 A の文字を置き換え、挿入、削除することができる場合、文字列 A をターゲット文字列 B と同一にするために必要な修正数はいくつですか？</em></p>
+
+<h3 id="dp-テーブル">DP テーブル</h3>
+
+<p>以下の表において、「sitting」（左側に垂直にマップされたもの）は比較対象の文字列であり、「kitten」（上部に水平にマップされたもの）はターゲット文字列です。空文字を基本ケースとするため、最初の行と列は 1 ずつ増加します。一行目でいうと、空文字を「kitten」にするには６文字の追加が必要な為です。</p>
+
+<p><code class="language-plaintext highlighter-rouge">[1, 1]</code>の位置から 2 つの文字を比較し、左から各セルを各行チェックしていきます。比較対象の文字列の観点から見ると水平増加は文字の追加を表し、垂直増加は削除を表します。そして左上から右下への斜め増加は文字の置き換えを意味しますが、文字が同一である場合、置き換えは必要無く、操作数は左上と同じままになります。</p>
+
+<p><img src="/assets/images/levenshtein.png" style="background-color: #FFF;" />
+<!-- ![levenshtein](/image/levenshtein.png) --></p>
+
+<h3 id="実装">実装</h3>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">levenshtein</span><span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="n">target</span><span class="p">):</span>
+    <span class="n">slen</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>  <span class="c1"># +1 for empty string
+</span>    <span class="n">tlen</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">target</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="n">dp</span> <span class="o">=</span> <span class="p">[[</span><span class="mi">0</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">tlen</span><span class="p">)]</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">slen</span><span class="p">)]</span>  <span class="c1"># DP table creation
+</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">slen</span><span class="p">):</span>  <span class="c1"># base case of an empty character
+</span>        <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">i</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">tlen</span><span class="p">):</span>
+        <span class="n">dp</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">i</span>
+
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">slen</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">tlen</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">s</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="n">target</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]:</span>  <span class="c1"># if characters are identical, cost is 0
+</span>                <span class="n">substitute_cost</span> <span class="o">=</span> <span class="mi">0</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">substitute_cost</span> <span class="o">=</span> <span class="mi">1</span>
+            <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span>  <span class="c1"># delete
+</span>                           <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span>  <span class="c1"># insert
+</span>                           <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="n">substitute_cost</span><span class="p">)</span>  <span class="c1"># substitute
+</span>
+    <span class="k">return</span> <span class="n">dp</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+</code></pre></div></div>]]></content><author><name></name></author><summary type="html"><![CDATA[文字列に効く動的計画法: レーベンシュタイン距離]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://yohei.codes/assets/images/levenshtein.png" /><media:content medium="image" url="https://yohei.codes/assets/images/levenshtein.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="jp"><title type="html">文字列に効く動的計画法 (DP)</title><link href="https://yohei.codes/jp/2023/02/02/dp-for-string-metrics.html" rel="alternate" type="text/html" title="文字列に効く動的計画法 (DP)" /><published>2023-02-02T00:00:00+00:00</published><updated>2023-02-02T00:00:00+00:00</updated><id>https://yohei.codes/2023/02/02/dp-for-string-metrics</id><content type="html" xml:base="https://yohei.codes/2023/02/02/dp-for-string-metrics.html"><![CDATA[<h1 id="文字列に効く動的計画法-dp">文字列に効く動的計画法 (DP)</h1>
+
+<p>動的計画法(DP)は複雑な問題をより小さく単純な部分問題に分割し解決する手法です。その中には文字列メトリクスに対して効果的なパターンもいくつかあり、このシリーズはそれらに関する私のまとめノートです。何か追加すべきものがあると思われる場合は、お気軽にお問い合わせください。</p>
+
+<blockquote>
+  <h2 id="記事リスト">記事リスト</h2>
+
+  <ul>
+    <li><a href="/jp/2023/02/03/dp-levenshtein.html">レーベンシュタイン距離</a></li>
+    <li><a href="/jp/2023/02/05/dp-lcs.html">最長共通部分列(LCS)</a></li>
+    <li><a href="/jp/2023/02/06/dp-regex.html">正規表現チェック</a></li>
+    <li>Distinct Subsequence (coming soon)</li>
+    <li>Longest Repeating Subsequence (coming soon)</li>
+    <li>Hamming Distance (coming soon)</li>
+  </ul>
+</blockquote>
+
+<h2 id="読む前提条件">読む前提条件</h2>
+
+<p>出来るだけ噛み砕いて説明するよう努力していますが、基本的な動的計画法自体の説明になっているかどうかは自信がありませんので、DP 自体への入門はこちらの<a href="https://qiita.com/drken/items/a5e6fe22863b7992efdb">記事</a>を参照していただけたらと思います。</p>
+
+<h2 id="理解のコツdp-テーブルの初期化と更新">理解のコツ：DP テーブルの初期化と更新</h2>
+
+<p>DP の解法や実装方法はいくつかあるのですが、このシリーズでは所謂ボトムアップというアプローチを使っています。トップダウンでは再帰が使われるのに対し、ボトムアップはテーブル（タブとも呼ばれる）が使われ可視化しやすいので自分もボトムアップで理解することの方が多いです。</p>
+
+<p>レーベンシュタイン距離の例：</p>
+
+<p><img src="/assets/images/levenshtein.png" style="background-color: #FFF;" />
+<!-- ![levenshtein](/assets/images/levenshtein.png) --></p>
+
+<p>このシリーズは文字列に対する動的計画法をまとめていますが、問題によりその応用は様々です。それらを頭の中で整理するコツは DP テーブルが目的に応じてどのように初期化されるか、そしてどの様に更新されるかを問題毎に理解することだと思います。</p>
+
+<p>鍵となるテーブル更新の実装部分：</p>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">if</span> <span class="n">s</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="n">target</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]:</span>  <span class="c1"># if characters are identical, cost is 0
+</span>    <span class="n">substitute_cost</span> <span class="o">=</span> <span class="mi">0</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="n">substitute_cost</span> <span class="o">=</span> <span class="mi">1</span>
+<span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="p">]</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span>  <span class="c1"># delete
+</span>                <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span>  <span class="c1"># insert
+</span>                <span class="n">dp</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="n">substitute_cost</span><span class="p">)</span>  <span class="c1"># substitute
+</span></code></pre></div></div>]]></content><author><name></name></author><summary type="html"><![CDATA[文字列に効く動的計画法 (DP)]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://yohei.codes/assets/images/levenshtein.png" /><media:content medium="image" url="https://yohei.codes/assets/images/levenshtein.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="jp"><title type="html">xv6: OSはどうメモリを参照、管理するのか（後編）</title><link href="https://yohei.codes/jp/2020/07/31/xv6-memory-2.html" rel="alternate" type="text/html" title="xv6: OSはどうメモリを参照、管理するのか（後編）" /><published>2020-07-31T00:00:00+00:00</published><updated>2020-07-31T00:00:00+00:00</updated><id>https://yohei.codes/2020/07/31/xv6-memory-2</id><content type="html" xml:base="https://yohei.codes/2020/07/31/xv6-memory-2.html"><![CDATA[<h1 id="xv6-osはどうメモリを参照管理するのか後編">xv6: OSはどうメモリを参照、管理するのか（後編）</h1>
+
+<p>この記事ではブートからカーネルのメイン関数に入るまでxv6がいかにメモリを参照するのかを追った<a href="/jp/2020/06/18/xv6-memory-1.html">前回の記事</a>に続き、メイン関数以降のカーネル空間とユーザー空間でのメモリ管理の構造を追います。具体的には、xv6はMMU（メモリ管理機構）の2段のページング構造を使っていて、これは段数は違えどLinuxのメモリー管理構造と本質的には同じです。</p>
+
+<h2 id="mainc">main.c</h2>
+
+<p>xv6がブートし、<code class="language-plaintext highlighter-rouge">entry.S</code>からカーネルのメイン関数に入ると、まずメモリのセットアップが行われます。先頭にある<code class="language-plaintext highlighter-rouge">kinit1</code>関数と <code class="language-plaintext highlighter-rouge">kvmalloc</code>関数の二つがカーネルモードのメモリ空間を2段のページング構造を使ってセットアップし、デバイスの初期化や割り込みの設定等の後に<code class="language-plaintext highlighter-rouge">kinit2</code>関数と<code class="language-plaintext highlighter-rouge">userinit</code>関数がユーザーモード用のメモリをセットアップします。</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">int</span>
+<span class="nf">main</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="n">kinit1</span><span class="p">(</span><span class="n">end</span><span class="p">,</span> <span class="n">P2V</span><span class="p">(</span><span class="mi">4</span><span class="o">*</span><span class="mi">1024</span><span class="o">*</span><span class="mi">1024</span><span class="p">));</span> <span class="c1">// phys page allocator</span>
+  <span class="n">kvmalloc</span><span class="p">();</span>      <span class="c1">// kernel page table</span>
+  <span class="p">...</span> <span class="n">device</span> <span class="n">initialization</span> <span class="p">...</span>
+  <span class="n">kinit2</span><span class="p">(</span><span class="n">P2V</span><span class="p">(</span><span class="mi">4</span><span class="o">*</span><span class="mi">1024</span><span class="o">*</span><span class="mi">1024</span><span class="p">),</span> <span class="n">P2V</span><span class="p">(</span><span class="n">PHYSTOP</span><span class="p">));</span> <span class="c1">// must come after startothers()</span>
+  <span class="n">userinit</span><span class="p">();</span>      <span class="c1">// first user process</span>
+  <span class="n">mpmain</span><span class="p">();</span>        <span class="c1">// finish this processor's setup</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<h2 id="カーネルモード">カーネルモード</h2>
+
+<p>まずはカーネルモードのメモリ管理を追っていきます。ここでは先述したページングを使ったメモリ管理の仕組みがポイントとなります。そしてカーネルモードでのメモリページのマッピングは実はユーザーモードでも使われています。</p>
+
+<h3 id="メモリアロケーション">メモリアロケーション</h3>
+
+<p>メイン関数の一番最初にある<code class="language-plaintext highlighter-rouge">kinit1</code>関数は<code class="language-plaintext highlighter-rouge">*vstart</code>と<code class="language-plaintext highlighter-rouge">*vend</code>を引数にとり、指定された範囲分のメモリをカーネルが使えるようページ単位にアロケートし（割り当て）ます。上記のメイン関数では<code class="language-plaintext highlighter-rouge">end</code> (ELFファイルからメモリへロードされたカーネル直後のアドレス)から<code class="language-plaintext highlighter-rouge">P2V(4*1024*1024)</code>（マクロを展開すると<code class="language-plaintext highlighter-rouge">KERNBASE</code>である<code class="language-plaintext highlighter-rouge">0x80000000</code>に4MBを足した<code class="language-plaintext highlighter-rouge">0x80400000</code>）までの範囲が指定されています。それでは<code class="language-plaintext highlighter-rouge">kinit1</code>関数を追っていきます。</p>
+
+<blockquote>
+  <p><strong><a href="/jp/2020/06/18/xv6-memory-1.html">前回</a>からのノート</strong></p>
+  <ul>
+    <li>カーネルの命令列は<code class="language-plaintext highlighter-rouge">0x80100000</code>の仮想アドレスをベースにリンクされています。</li>
+    <li>カーネルのメイン関数に入った時点ではカーネルは<code class="language-plaintext highlighter-rouge">entrypgdir</code>のマッピングを使った1段のページングモードで走っています。</li>
+  </ul>
+</blockquote>
+
+<p>まず<code class="language-plaintext highlighter-rouge">kinit1</code>関数はカーネルメモリの構造体のロックを初期化し、<code class="language-plaintext highlighter-rouge">freerange</code>関数を呼びます:</p>
+
+<p>kalloc.c</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span>
+<span class="nf">kinit1</span><span class="p">(</span><span class="kt">void</span> <span class="o">*</span><span class="n">vstart</span><span class="p">,</span> <span class="kt">void</span> <span class="o">*</span><span class="n">vend</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="n">initlock</span><span class="p">(</span><span class="o">&amp;</span><span class="n">kmem</span><span class="p">.</span><span class="n">lock</span><span class="p">,</span> <span class="s">"kmem"</span><span class="p">);</span>
+  <span class="n">kmem</span><span class="p">.</span><span class="n">use_lock</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+  <span class="n">freerange</span><span class="p">(</span><span class="n">vstart</span><span class="p">,</span> <span class="n">vend</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">freerange</code>関数は<code class="language-plaintext highlighter-rouge">vstart</code>から<code class="language-plaintext highlighter-rouge">vend</code>まで<code class="language-plaintext highlighter-rouge">PGSIZE</code>ごとに<code class="language-plaintext highlighter-rouge">kfree</code>を呼んでいます:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span>
+<span class="nf">freerange</span><span class="p">(</span><span class="kt">void</span> <span class="o">*</span><span class="n">vstart</span><span class="p">,</span> <span class="kt">void</span> <span class="o">*</span><span class="n">vend</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="kt">char</span> <span class="o">*</span><span class="n">p</span><span class="p">;</span>
+  <span class="n">p</span> <span class="o">=</span> <span class="p">(</span><span class="kt">char</span><span class="o">*</span><span class="p">)</span><span class="n">PGROUNDUP</span><span class="p">((</span><span class="n">uint</span><span class="p">)</span><span class="n">vstart</span><span class="p">);</span>
+  <span class="k">for</span><span class="p">(;</span> <span class="n">p</span> <span class="o">+</span> <span class="n">PGSIZE</span> <span class="o">&lt;=</span> <span class="p">(</span><span class="kt">char</span><span class="o">*</span><span class="p">)</span><span class="n">vend</span><span class="p">;</span> <span class="n">p</span> <span class="o">+=</span> <span class="n">PGSIZE</span><span class="p">)</span>
+    <span class="n">kfree</span><span class="p">(</span><span class="n">p</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>そして<code class="language-plaintext highlighter-rouge">kfree</code>は指定されたアドレスから1ページ分<code class="language-plaintext highlighter-rouge">1</code>の値を書き込み、<code class="language-plaintext highlighter-rouge">run</code>構造体を指すポインターにキャストし、singly-linkedリストである<code class="language-plaintext highlighter-rouge">kmem.freelist</code>の先頭に挿入します。メモリページを使用する場合は<code class="language-plaintext highlighter-rouge">kalloc</code>関数がこの<code class="language-plaintext highlighter-rouge">kmem.freelist</code>からポインターを返します:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">struct</span> <span class="n">run</span> <span class="p">{</span>
+  <span class="k">struct</span> <span class="n">run</span> <span class="o">*</span><span class="n">next</span><span class="p">;</span>
+<span class="p">};</span>
+<span class="p">...</span>
+<span class="kt">void</span>
+<span class="nf">kfree</span><span class="p">(</span><span class="kt">char</span> <span class="o">*</span><span class="n">v</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="p">...</span>
+  <span class="c1">// Fill with junk to catch dangling refs.</span>
+  <span class="n">memset</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">PGSIZE</span><span class="p">);</span>
+
+  <span class="k">if</span><span class="p">(</span><span class="n">kmem</span><span class="p">.</span><span class="n">use_lock</span><span class="p">)</span>
+    <span class="n">acquire</span><span class="p">(</span><span class="o">&amp;</span><span class="n">kmem</span><span class="p">.</span><span class="n">lock</span><span class="p">);</span>
+  <span class="n">r</span> <span class="o">=</span> <span class="p">(</span><span class="k">struct</span> <span class="n">run</span><span class="o">*</span><span class="p">)</span><span class="n">v</span><span class="p">;</span>
+  <span class="n">r</span><span class="o">-&gt;</span><span class="n">next</span> <span class="o">=</span> <span class="n">kmem</span><span class="p">.</span><span class="n">freelist</span><span class="p">;</span>
+  <span class="n">kmem</span><span class="p">.</span><span class="n">freelist</span> <span class="o">=</span> <span class="n">r</span><span class="p">;</span>
+  <span class="k">if</span><span class="p">(</span><span class="n">kmem</span><span class="p">.</span><span class="n">use_lock</span><span class="p">)</span>
+    <span class="n">release</span><span class="p">(</span><span class="o">&amp;</span><span class="n">kmem</span><span class="p">.</span><span class="n">lock</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<h3 id="2段ページング">2段ページング</h3>
+
+<p>ここまででカーネルが指定されたメモリ範囲をページごとに割り当てる仕組みを追ったので、引き続き<code class="language-plaintext highlighter-rouge">kvmalloc</code>関数がいかに2段のページング構造をセットアップしていくのかを見ていきます。</p>
+
+<blockquote>
+  <p>オンラインで<code class="language-plaintext highlighter-rouge">x86 ページング</code>等を検索するとこのようなダイアグラムが見つかり、3つに分割された仮想アドレスが物理アドレスに変換される様子は理解出来るのですが、この構造をOS側からいかに使うのかを明確に理解するのは（少なくとも自分には）容易ではありません。
+<img src="/assets/images/paging-mmu-diagram.png" alt="paging-mmu-diagram" />
+ここでのキーポイントはこの2段のマッピングをセットアップするのはOS側の仕事であり、またどう使うかはOS側の自由ということです。具体的にはOSはまず1ページ分のメモリをページディレクトリ用に、もう1ページ分のメモリをページテーブル用に割り当てます。そしてそのページディレクトリとページテーブルに好きな仮想アドレスと狙った物理アドレスをエントリーとして書き込むことで望んだマッピングが作られます。ここでもう一つ重要なのがこのマッピングがページディレクトリのアドレスで指定され、それを<code class="language-plaintext highlighter-rouge">CR3</code>レジスターが保持しているということです。これにより<code class="language-plaintext highlighter-rouge">CR3</code>レジスタの値を書き換えることでプロセスごとの仮想アドレスから物理アドレスのマッピングを切り替えることが可能になります。そしてこれから追う<code class="language-plaintext highlighter-rouge">kvmalloc</code>関数はこのセットアップからマッピングの切り替えまで全体の流れを実行します。</p>
+</blockquote>
+
+<p><code class="language-plaintext highlighter-rouge">kvmalloc</code>は2段のページング構造をセットアップする<code class="language-plaintext highlighter-rouge">setupkvm</code>関数を呼びます。<code class="language-plaintext highlighter-rouge">setupkvm</code>はまず<code class="language-plaintext highlighter-rouge">kalloc</code>を呼び新たなページディレクトリの為のメモリページを<code class="language-plaintext highlighter-rouge">pgdir</code>変数にポインターとして格納します。その後キーとなる関数は<code class="language-plaintext highlighter-rouge">mapppages</code>関数で、渡されたページディレクト内に指定された仮想アドレスからページテーブルを作成し、その中のエントリーに物理アドレスを指定された範囲分書き込みます:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">pde_t</span><span class="o">*</span>
+<span class="nf">setupkvm</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="n">pde_t</span> <span class="o">*</span><span class="n">pgdir</span><span class="p">;</span>
+  <span class="k">struct</span> <span class="n">kmap</span> <span class="o">*</span><span class="n">k</span><span class="p">;</span>
+
+  <span class="k">if</span><span class="p">((</span><span class="n">pgdir</span> <span class="o">=</span> <span class="p">(</span><span class="n">pde_t</span><span class="o">*</span><span class="p">)</span><span class="n">kalloc</span><span class="p">())</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="c1">// ページディレクトリの1ページ分のメモリへのポインターを格納</span>
+    <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+  <span class="n">memset</span><span class="p">(</span><span class="n">pgdir</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">PGSIZE</span><span class="p">);</span>
+  <span class="k">if</span> <span class="p">(</span><span class="n">P2V</span><span class="p">(</span><span class="n">PHYSTOP</span><span class="p">)</span> <span class="o">&gt;</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="n">DEVSPACE</span><span class="p">)</span>
+    <span class="n">panic</span><span class="p">(</span><span class="s">"PHYSTOP too high"</span><span class="p">);</span>
+  <span class="k">for</span><span class="p">(</span><span class="n">k</span> <span class="o">=</span> <span class="n">kmap</span><span class="p">;</span> <span class="n">k</span> <span class="o">&lt;</span> <span class="o">&amp;</span><span class="n">kmap</span><span class="p">[</span><span class="n">NELEM</span><span class="p">(</span><span class="n">kmap</span><span class="p">)];</span> <span class="n">k</span><span class="o">++</span><span class="p">)</span>
+    <span class="k">if</span><span class="p">(</span><span class="n">mappages</span><span class="p">(</span><span class="n">pgdir</span><span class="p">,</span> <span class="n">k</span><span class="o">-&gt;</span><span class="n">virt</span><span class="p">,</span> <span class="n">k</span><span class="o">-&gt;</span><span class="n">phys_end</span> <span class="o">-</span> <span class="n">k</span><span class="o">-&gt;</span><span class="n">phys_start</span><span class="p">,</span>
+                <span class="p">(</span><span class="n">uint</span><span class="p">)</span><span class="n">k</span><span class="o">-&gt;</span><span class="n">phys_start</span><span class="p">,</span> <span class="n">k</span><span class="o">-&gt;</span><span class="n">perm</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+      <span class="n">freevm</span><span class="p">(</span><span class="n">pgdir</span><span class="p">);</span>
+      <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="p">}</span>
+  <span class="k">return</span> <span class="n">pgdir</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>具体的には<code class="language-plaintext highlighter-rouge">mappages</code>関数はページテーブルのエントリーに物理アドレスをページサイズごとに書き込み、指定された物理アドレスの範囲分を書き込むまでループします。ページテーブルのエントリーは<code class="language-plaintext highlighter-rouge">walkpgdir</code>関数で作成され、ポインターが返されます:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="kt">int</span>
+<span class="nf">mappages</span><span class="p">(</span><span class="n">pde_t</span> <span class="o">*</span><span class="n">pgdir</span><span class="p">,</span> <span class="kt">void</span> <span class="o">*</span><span class="n">va</span><span class="p">,</span> <span class="n">uint</span> <span class="n">size</span><span class="p">,</span> <span class="n">uint</span> <span class="n">pa</span><span class="p">,</span> <span class="kt">int</span> <span class="n">perm</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="kt">char</span> <span class="o">*</span><span class="n">a</span><span class="p">,</span> <span class="o">*</span><span class="n">last</span><span class="p">;</span>
+  <span class="n">pte_t</span> <span class="o">*</span><span class="n">pte</span><span class="p">;</span>
+
+  <span class="n">a</span> <span class="o">=</span> <span class="p">(</span><span class="kt">char</span><span class="o">*</span><span class="p">)</span><span class="n">PGROUNDDOWN</span><span class="p">((</span><span class="n">uint</span><span class="p">)</span><span class="n">va</span><span class="p">);</span>
+  <span class="n">last</span> <span class="o">=</span> <span class="p">(</span><span class="kt">char</span><span class="o">*</span><span class="p">)</span><span class="n">PGROUNDDOWN</span><span class="p">(((</span><span class="n">uint</span><span class="p">)</span><span class="n">va</span><span class="p">)</span> <span class="o">+</span> <span class="n">size</span> <span class="o">-</span> <span class="mi">1</span><span class="p">);</span>
+  <span class="k">for</span><span class="p">(;;){</span>
+    <span class="k">if</span><span class="p">((</span><span class="n">pte</span> <span class="o">=</span> <span class="n">walkpgdir</span><span class="p">(</span><span class="n">pgdir</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span>
+      <span class="k">return</span> <span class="o">-</span><span class="mi">1</span><span class="p">;</span>
+    <span class="k">if</span><span class="p">(</span><span class="o">*</span><span class="n">pte</span> <span class="o">&amp;</span> <span class="n">PTE_P</span><span class="p">)</span>
+      <span class="n">panic</span><span class="p">(</span><span class="s">"remap"</span><span class="p">);</span>
+    <span class="o">*</span><span class="n">pte</span> <span class="o">=</span> <span class="n">pa</span> <span class="o">|</span> <span class="n">perm</span> <span class="o">|</span> <span class="n">PTE_P</span><span class="p">;</span> <span class="c1">// 物理アドレスを割り当てられたページテーブルのエントリーに書き込む</span>
+    <span class="k">if</span><span class="p">(</span><span class="n">a</span> <span class="o">==</span> <span class="n">last</span><span class="p">)</span>
+      <span class="k">break</span><span class="p">;</span>
+    <span class="n">a</span> <span class="o">+=</span> <span class="n">PGSIZE</span><span class="p">;</span>
+    <span class="n">pa</span> <span class="o">+=</span> <span class="n">PGSIZE</span><span class="p">;</span>
+  <span class="p">}</span>
+  <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">walkpgdir</code>関数はまず指定された仮想アドレスである<code class="language-plaintext highlighter-rouge">va</code>をページディレクトリ内のインデックスに変換（先頭10ビットを抽出）し、渡されたページディレクトリへのポインターである<code class="language-plaintext highlighter-rouge">pgdir</code>からインデックス指定することでページディレクトリのエントリーを指すポインターを作り、<code class="language-plaintext highlighter-rouge">pde</code>変数に格納します。そしてそのページディレクトリのエントリーがすでに存在しているかどうかを<code class="language-plaintext highlighter-rouge">PTE_P</code>フラッグでチェックし、存在している場合はそのページディレクトリーのエントリーの値からページテーブルへのポインターを<code class="language-plaintext highlighter-rouge">pgtab</code>変数に格納します。存在しない場合は先にページテーブル用のメモリーを割り当て、そのアドレスをページディレクトリのエントリーの値として書き込みます。そしてこの分岐処理の後、ページテーブルのアドレスから<code class="language-plaintext highlighter-rouge">va</code>の真ん中10ビットをインデックス値として指定したページテーブルのエントリーへのポインターが返り値となります:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="n">pte_t</span> <span class="o">*</span>
+<span class="nf">walkpgdir</span><span class="p">(</span><span class="n">pde_t</span> <span class="o">*</span><span class="n">pgdir</span><span class="p">,</span> <span class="k">const</span> <span class="kt">void</span> <span class="o">*</span><span class="n">va</span><span class="p">,</span> <span class="kt">int</span> <span class="n">alloc</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="n">pde_t</span> <span class="o">*</span><span class="n">pde</span><span class="p">;</span>
+  <span class="n">pte_t</span> <span class="o">*</span><span class="n">pgtab</span><span class="p">;</span>
+
+  <span class="n">pde</span> <span class="o">=</span> <span class="o">&amp;</span><span class="n">pgdir</span><span class="p">[</span><span class="n">PDX</span><span class="p">(</span><span class="n">va</span><span class="p">)];</span> <span class="c1">// ページディレクトリエントリーへのポインターを格納</span>
+  <span class="k">if</span><span class="p">(</span><span class="o">*</span><span class="n">pde</span> <span class="o">&amp;</span> <span class="n">PTE_P</span><span class="p">){</span>
+    <span class="n">pgtab</span> <span class="o">=</span> <span class="p">(</span><span class="n">pte_t</span><span class="o">*</span><span class="p">)</span><span class="n">P2V</span><span class="p">(</span><span class="n">PTE_ADDR</span><span class="p">(</span><span class="o">*</span><span class="n">pde</span><span class="p">));</span> <span class="c1">// ページディレクトリエントリーの値からページテーブルへのポインターを格納</span>
+  <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+    <span class="k">if</span><span class="p">(</span><span class="o">!</span><span class="n">alloc</span> <span class="o">||</span> <span class="p">(</span><span class="n">pgtab</span> <span class="o">=</span> <span class="p">(</span><span class="n">pte_t</span><span class="o">*</span><span class="p">)</span><span class="n">kalloc</span><span class="p">())</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="c1">// 新規ページテーブルのメモリをアロケート</span>
+      <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="c1">// Make sure all those PTE_P bits are zero.</span>
+    <span class="n">memset</span><span class="p">(</span><span class="n">pgtab</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">PGSIZE</span><span class="p">);</span>
+    <span class="c1">// The permissions here are overly generous, but they can</span>
+    <span class="c1">// be further restricted by the permissions in the page table</span>
+    <span class="c1">// entries, if necessary.</span>
+    <span class="o">*</span><span class="n">pde</span> <span class="o">=</span> <span class="n">V2P</span><span class="p">(</span><span class="n">pgtab</span><span class="p">)</span> <span class="o">|</span> <span class="n">PTE_P</span> <span class="o">|</span> <span class="n">PTE_W</span> <span class="o">|</span> <span class="n">PTE_U</span><span class="p">;</span> <span class="c1">// ページディレクトリエントリーに作成されたページテーブルのアドレスを書き込む</span>
+  <span class="p">}</span>
+  <span class="k">return</span> <span class="o">&amp;</span><span class="n">pgtab</span><span class="p">[</span><span class="n">PTX</span><span class="p">(</span><span class="n">va</span><span class="p">)];</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>ここまでで2段のページング構造がセットアップされる仕組みを追いました。では実際にxv6がどんな仮想メモリーのマップを作っているのかを見ていきます:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="k">struct</span> <span class="n">kmap</span> <span class="p">{</span>
+  <span class="kt">void</span> <span class="o">*</span><span class="n">virt</span><span class="p">;</span>
+  <span class="n">uint</span> <span class="n">phys_start</span><span class="p">;</span>
+  <span class="n">uint</span> <span class="n">phys_end</span><span class="p">;</span>
+  <span class="kt">int</span> <span class="n">perm</span><span class="p">;</span>
+<span class="p">}</span> <span class="n">kmap</span><span class="p">[]</span> <span class="o">=</span> <span class="p">{</span>
+ <span class="p">{</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="n">KERNBASE</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>             <span class="n">EXTMEM</span><span class="p">,</span>    <span class="n">PTE_W</span><span class="p">},</span> <span class="c1">// I/O space</span>
+ <span class="p">{</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="n">KERNLINK</span><span class="p">,</span> <span class="n">V2P</span><span class="p">(</span><span class="n">KERNLINK</span><span class="p">),</span> <span class="n">V2P</span><span class="p">(</span><span class="n">data</span><span class="p">),</span> <span class="mi">0</span><span class="p">},</span>     <span class="c1">// kern text+rodata</span>
+ <span class="p">{</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="n">data</span><span class="p">,</span>     <span class="n">V2P</span><span class="p">(</span><span class="n">data</span><span class="p">),</span>     <span class="n">PHYSTOP</span><span class="p">,</span>   <span class="n">PTE_W</span><span class="p">},</span> <span class="c1">// kern data+memory</span>
+ <span class="p">{</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="n">DEVSPACE</span><span class="p">,</span> <span class="n">DEVSPACE</span><span class="p">,</span>      <span class="mi">0</span><span class="p">,</span>         <span class="n">PTE_W</span><span class="p">},</span> <span class="c1">// more devices</span>
+<span class="p">};</span>
+</code></pre></div></div>
+
+<p>上記がソースコード上でのマッピングですが、実際の値は以下のようになります:</p>
+
+<ul>
+  <li>仮想アドレス: <code class="language-plaintext highlighter-rouge">KERNBASE</code>（0x80000000）を物理アドレス: <code class="language-plaintext highlighter-rouge">0</code>から<code class="language-plaintext highlighter-rouge">EXTMEM</code>（0x100000）まで</li>
+  <li>仮想アドレス: <code class="language-plaintext highlighter-rouge">KERNLINK</code>（0x80100000）を物理アドレス: <code class="language-plaintext highlighter-rouge">KERNLINK</code>（0x100000）から<code class="language-plaintext highlighter-rouge">V2P(data)</code> (カーネルイメージのread-onlyデータ）まで</li>
+  <li>仮想アドレス: <code class="language-plaintext highlighter-rouge">data</code>を物理アドレス: <code class="language-plaintext highlighter-rouge">V2P(data)</code>から<code class="language-plaintext highlighter-rouge">PHYSTOP</code>（0xE000000: 235MB）まで</li>
+  <li>仮想アドレス: <code class="language-plaintext highlighter-rouge">DEVSPACE</code>（0xFE000000）を物理アドレス: <code class="language-plaintext highlighter-rouge">DEVSPACE</code>（0xFE000000）から <code class="language-plaintext highlighter-rouge">0</code>まで</li>
+</ul>
+
+<p>カーネルのメイン関数にある<code class="language-plaintext highlighter-rouge">kvmalloc</code>関数は上記のマッピングを作成し、最終的に<code class="language-plaintext highlighter-rouge">switchkvm</code>関数が<code class="language-plaintext highlighter-rouge">CR3</code>レジスターにそのページディレクトリのアドレスを書き込むことでこのマッピングが有効になります。カーネルの命令列へのマッピングは<code class="language-plaintext highlighter-rouge">entrypgdir</code>から変わっていないので命令実行に影響は無くそのまま実行が進む訳です。</p>
+
+<h2 id="ユーザーモード">ユーザーモード</h2>
+
+<p>上記にあるようにカーネルのメイン関数では割り込みやデバイスの初期化の関数の後に<code class="language-plaintext highlighter-rouge">kinit2(P2V(4*1024*1024), P2V(PHYSTOP))</code>と<code class="language-plaintext highlighter-rouge">userinit()</code>という二つの関数呼び出しが見られます。一つ目の<code class="language-plaintext highlighter-rouge">kinit2</code>は仮想アドレス<code class="language-plaintext highlighter-rouge">0x80400000</code>から<code class="language-plaintext highlighter-rouge">0x8E000000</code>を利用可能なページに割り当て、二つ目の<code class="language-plaintext highlighter-rouge">userinit</code>はユーザープロセスの為にコンテクストやメモリー、割り込み等の設定を行います。</p>
+
+<p>この<code class="language-plaintext highlighter-rouge">userinit</code>関数を見ていくと、<code class="language-plaintext highlighter-rouge">setupkvm</code>関数が呼ばれているのが見られます。これはユーザーモード下で割り込みやシステムコールがあった場合にページディレクトリを切り替えなくてもカーネルのメモリーを参照できるようにする為であり、それが先述したようにユーザーモードでもカーネルのマッピングを使う理由になります。</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span> <span class="nf">userinit</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="k">struct</span> <span class="n">proc</span> <span class="o">*</span><span class="n">p</span><span class="p">;</span>
+  <span class="k">extern</span> <span class="kt">char</span> <span class="n">_binary_initcode_start</span><span class="p">[],</span> <span class="n">_binary_initcode_size</span><span class="p">[];</span>
+
+  <span class="n">p</span> <span class="o">=</span> <span class="n">allocproc</span><span class="p">();</span>
+
+  <span class="n">initproc</span> <span class="o">=</span> <span class="n">p</span><span class="p">;</span>
+  <span class="k">if</span> <span class="p">((</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">pgdir</span> <span class="o">=</span> <span class="n">setupkvm</span><span class="p">())</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span>
+    <span class="n">panic</span><span class="p">(</span><span class="s">"userinit: out of memory?"</span><span class="p">);</span>
+  <span class="n">inituvm</span><span class="p">(</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">pgdir</span><span class="p">,</span> <span class="n">_binary_initcode_start</span><span class="p">,</span> <span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="n">_binary_initcode_size</span><span class="p">);</span>
+  <span class="p">...</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">setupkvm</code>関数がカーネルのマッピングをセットアップすると<code class="language-plaintext highlighter-rouge">userinit</code>関数はそのページディレクトリと共に<code class="language-plaintext highlighter-rouge">initcode</code>へのポインターとサイズを<code class="language-plaintext highlighter-rouge">inituvm</code>関数に渡して呼び出します。</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span>
+<span class="nf">inituvm</span><span class="p">(</span><span class="n">pde_t</span> <span class="o">*</span><span class="n">pgdir</span><span class="p">,</span> <span class="kt">char</span> <span class="o">*</span><span class="n">init</span><span class="p">,</span> <span class="n">uint</span> <span class="n">sz</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="kt">char</span> <span class="o">*</span><span class="n">mem</span><span class="p">;</span>
+
+  <span class="k">if</span><span class="p">(</span><span class="n">sz</span> <span class="o">&gt;=</span> <span class="n">PGSIZE</span><span class="p">)</span>
+    <span class="n">panic</span><span class="p">(</span><span class="s">"inituvm: more than a page"</span><span class="p">);</span>
+  <span class="n">mem</span> <span class="o">=</span> <span class="n">kalloc</span><span class="p">();</span>
+  <span class="n">memset</span><span class="p">(</span><span class="n">mem</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">PGSIZE</span><span class="p">);</span>
+  <span class="n">mappages</span><span class="p">(</span><span class="n">pgdir</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">PGSIZE</span><span class="p">,</span> <span class="n">V2P</span><span class="p">(</span><span class="n">mem</span><span class="p">),</span> <span class="n">PTE_W</span><span class="o">|</span><span class="n">PTE_U</span><span class="p">);</span>
+  <span class="n">memmove</span><span class="p">(</span><span class="n">mem</span><span class="p">,</span> <span class="n">init</span><span class="p">,</span> <span class="n">sz</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>上記の<code class="language-plaintext highlighter-rouge">inituvim</code>関数はまず<code class="language-plaintext highlighter-rouge">kalloc</code>関数を呼び出して新たなページをアロケートし、<code class="language-plaintext highlighter-rouge">0</code>の値でその中身をリセットします。そして仮想アドレスの<code class="language-plaintext highlighter-rouge">0</code>とそのページへの物理アドレス<code class="language-plaintext highlighter-rouge">V2P(mem)</code>を<code class="language-plaintext highlighter-rouge">mappages</code>に渡して呼び出しています。これによって仮想アドレスの<code class="language-plaintext highlighter-rouge">0</code>がアロケートされた新規のメモリページを指す構造が出来あがります。最後に<code class="language-plaintext highlighter-rouge">memmove</code>がプロセスの初期化命令列である<code class="language-plaintext highlighter-rouge">init</code>をそのページに書き込むことでユーザープロセスが<code class="language-plaintext highlighter-rouge">EIP</code>の値として<code class="language-plaintext highlighter-rouge">0</code>のアドレスから実行できる環境が整う訳です。</p>
+
+<h2 id="まとめ">まとめ</h2>
+
+<p>長い記事となってしまいましたが、前編と後編を通してxv6がどのようにメモリーを管理、参照するかを順序立てて追いました。記事に書き出すのは自分の理解を整理、確認するいい機会です。これが誰かの為に役に立てばと思います。</p>]]></content><author><name></name></author><summary type="html"><![CDATA[xv6: OSはどうメモリを参照、管理するのか（後編）]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://yohei.codes/assets/images/paging-mmu-diagram.png" /><media:content medium="image" url="https://yohei.codes/assets/images/paging-mmu-diagram.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry></feed>

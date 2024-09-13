@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="jp"><head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>xv6: OSはどうメモリを参照、管理するのか（後編） | yohei.codes</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="xv6: OSはどうメモリを参照、管理するのか（後編）" />
+<meta property="og:locale" content="jp" />
+<meta name="description" content="xv6: OSはどうメモリを参照、管理するのか（後編）" />
+<meta property="og:description" content="xv6: OSはどうメモリを参照、管理するのか（後編）" />
+<link rel="canonical" href="https://yohei.codes/jp/2020/07/31/xv6-memory-2.html" />
+<meta property="og:url" content="https://yohei.codes/2020/07/31/xv6-memory-2.html" />
+<meta property="og:site_name" content="yohei.codes" />
+<meta property="og:image" content="https://yohei.codes/assets/images/paging-mmu-diagram.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2020-07-31T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://yohei.codes/assets/images/paging-mmu-diagram.png" />
+<meta property="twitter:title" content="xv6: OSはどうメモリを参照、管理するのか（後編）" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2020-07-31T00:00:00+00:00","datePublished":"2020-07-31T00:00:00+00:00","description":"xv6: OSはどうメモリを参照、管理するのか（後編）","headline":"xv6: OSはどうメモリを参照、管理するのか（後編）","image":"https://yohei.codes/assets/images/paging-mmu-diagram.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://yohei.codes/2020/07/31/xv6-memory-2.html"},"url":"https://yohei.codes/2020/07/31/xv6-memory-2.html"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/jp/assets/main.css"><link type="application/atom+xml" rel="alternate" href="https://yohei.codes/jp/feed.xml" title="yohei.codes" /><script>
+if(!(window.doNotTrack === "1" || navigator.doNotTrack === "1" || navigator.doNotTrack === "yes" || navigator.msDoNotTrack === "1")) {
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-52885755-2', 'auto');
+  ga('send', 'pageview');
+}
+</script>
+  
+<link rel="apple-touch-icon" sizes="180x180" href="/jp/assets/images/favicon/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/jp/assets/images/favicon/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/jp/assets/images/favicon/favicon-16x16.png">
+    <link rel="manifest" href="/jp/assets/images/favicon/manifest.json">
+    <link rel="mask-icon" href="/jp/assets/images/favicon/safari-pinned-tab.svg" color="#5bbad5">
+    <meta name="msapplication-TileColor" content="#da532c">
+    <meta name="theme-color" content="#ffffff">
+  </head><body><header class="site-header" role="banner">
+
+    <div class="wrapper"><a class="site-title" rel="author" href="/jp/">yohei.codes</a><nav class="site-nav">
+          <input type="checkbox" id="nav-trigger" class="nav-trigger" />
+          <label for="nav-trigger">
+            <span class="menu-icon">
+              <svg viewBox="0 0 18 15" width="18px" height="15px">
+                <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.032C17.335,0,18,0.665,18,1.484L18,1.484z M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.032C17.335,6.031,18,6.696,18,7.516L18,7.516z M18,13.516C18,14.335,17.335,15,16.516,15H1.484 C0.665,15,0,14.335,0,13.516l0,0c0-0.82,0.665-1.483,1.484-1.483h15.032C17.335,12.031,18,12.695,18,13.516L18,13.516z"/>
+              </svg>
+            </span>
+          </label>
+  
+          <div class="trigger"><a class="page-link" href="/jp/about/">About</a>
+    
+    [          
+    
+        
+            <a href=" /2020/07/31/xv6-memory-2.html">English</a> ]
+        
+    
+
+    
+    [          
+    
+        日本語 ]
+    
+</div>
+        </nav></div>
+  </header><main class="page-content" aria-label="Content">
+      <div class="wrapper">
+        <h1 id="xv6-osはどうメモリを参照管理するのか後編">xv6: OSはどうメモリを参照、管理するのか（後編）</h1>
+
+<p>この記事ではブートからカーネルのメイン関数に入るまでxv6がいかにメモリを参照するのかを追った<a href="/jp/2020/06/18/xv6-memory-1.html">前回の記事</a>に続き、メイン関数以降のカーネル空間とユーザー空間でのメモリ管理の構造を追います。具体的には、xv6はMMU（メモリ管理機構）の2段のページング構造を使っていて、これは段数は違えどLinuxのメモリー管理構造と本質的には同じです。</p>
+
+<h2 id="mainc">main.c</h2>
+
+<p>xv6がブートし、<code class="language-plaintext highlighter-rouge">entry.S</code>からカーネルのメイン関数に入ると、まずメモリのセットアップが行われます。先頭にある<code class="language-plaintext highlighter-rouge">kinit1</code>関数と <code class="language-plaintext highlighter-rouge">kvmalloc</code>関数の二つがカーネルモードのメモリ空間を2段のページング構造を使ってセットアップし、デバイスの初期化や割り込みの設定等の後に<code class="language-plaintext highlighter-rouge">kinit2</code>関数と<code class="language-plaintext highlighter-rouge">userinit</code>関数がユーザーモード用のメモリをセットアップします。</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">int</span>
+<span class="nf">main</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="n">kinit1</span><span class="p">(</span><span class="n">end</span><span class="p">,</span> <span class="n">P2V</span><span class="p">(</span><span class="mi">4</span><span class="o">*</span><span class="mi">1024</span><span class="o">*</span><span class="mi">1024</span><span class="p">));</span> <span class="c1">// phys page allocator</span>
+  <span class="n">kvmalloc</span><span class="p">();</span>      <span class="c1">// kernel page table</span>
+  <span class="p">...</span> <span class="n">device</span> <span class="n">initialization</span> <span class="p">...</span>
+  <span class="n">kinit2</span><span class="p">(</span><span class="n">P2V</span><span class="p">(</span><span class="mi">4</span><span class="o">*</span><span class="mi">1024</span><span class="o">*</span><span class="mi">1024</span><span class="p">),</span> <span class="n">P2V</span><span class="p">(</span><span class="n">PHYSTOP</span><span class="p">));</span> <span class="c1">// must come after startothers()</span>
+  <span class="n">userinit</span><span class="p">();</span>      <span class="c1">// first user process</span>
+  <span class="n">mpmain</span><span class="p">();</span>        <span class="c1">// finish this processor's setup</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<h2 id="カーネルモード">カーネルモード</h2>
+
+<p>まずはカーネルモードのメモリ管理を追っていきます。ここでは先述したページングを使ったメモリ管理の仕組みがポイントとなります。そしてカーネルモードでのメモリページのマッピングは実はユーザーモードでも使われています。</p>
+
+<h3 id="メモリアロケーション">メモリアロケーション</h3>
+
+<p>メイン関数の一番最初にある<code class="language-plaintext highlighter-rouge">kinit1</code>関数は<code class="language-plaintext highlighter-rouge">*vstart</code>と<code class="language-plaintext highlighter-rouge">*vend</code>を引数にとり、指定された範囲分のメモリをカーネルが使えるようページ単位にアロケートし（割り当て）ます。上記のメイン関数では<code class="language-plaintext highlighter-rouge">end</code> (ELFファイルからメモリへロードされたカーネル直後のアドレス)から<code class="language-plaintext highlighter-rouge">P2V(4*1024*1024)</code>（マクロを展開すると<code class="language-plaintext highlighter-rouge">KERNBASE</code>である<code class="language-plaintext highlighter-rouge">0x80000000</code>に4MBを足した<code class="language-plaintext highlighter-rouge">0x80400000</code>）までの範囲が指定されています。それでは<code class="language-plaintext highlighter-rouge">kinit1</code>関数を追っていきます。</p>
+
+<blockquote>
+  <p><strong><a href="/jp/2020/06/18/xv6-memory-1.html">前回</a>からのノート</strong></p>
+  <ul>
+    <li>カーネルの命令列は<code class="language-plaintext highlighter-rouge">0x80100000</code>の仮想アドレスをベースにリンクされています。</li>
+    <li>カーネルのメイン関数に入った時点ではカーネルは<code class="language-plaintext highlighter-rouge">entrypgdir</code>のマッピングを使った1段のページングモードで走っています。</li>
+  </ul>
+</blockquote>
+
+<p>まず<code class="language-plaintext highlighter-rouge">kinit1</code>関数はカーネルメモリの構造体のロックを初期化し、<code class="language-plaintext highlighter-rouge">freerange</code>関数を呼びます:</p>
+
+<p>kalloc.c</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span>
+<span class="nf">kinit1</span><span class="p">(</span><span class="kt">void</span> <span class="o">*</span><span class="n">vstart</span><span class="p">,</span> <span class="kt">void</span> <span class="o">*</span><span class="n">vend</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="n">initlock</span><span class="p">(</span><span class="o">&amp;</span><span class="n">kmem</span><span class="p">.</span><span class="n">lock</span><span class="p">,</span> <span class="s">"kmem"</span><span class="p">);</span>
+  <span class="n">kmem</span><span class="p">.</span><span class="n">use_lock</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+  <span class="n">freerange</span><span class="p">(</span><span class="n">vstart</span><span class="p">,</span> <span class="n">vend</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">freerange</code>関数は<code class="language-plaintext highlighter-rouge">vstart</code>から<code class="language-plaintext highlighter-rouge">vend</code>まで<code class="language-plaintext highlighter-rouge">PGSIZE</code>ごとに<code class="language-plaintext highlighter-rouge">kfree</code>を呼んでいます:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span>
+<span class="nf">freerange</span><span class="p">(</span><span class="kt">void</span> <span class="o">*</span><span class="n">vstart</span><span class="p">,</span> <span class="kt">void</span> <span class="o">*</span><span class="n">vend</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="kt">char</span> <span class="o">*</span><span class="n">p</span><span class="p">;</span>
+  <span class="n">p</span> <span class="o">=</span> <span class="p">(</span><span class="kt">char</span><span class="o">*</span><span class="p">)</span><span class="n">PGROUNDUP</span><span class="p">((</span><span class="n">uint</span><span class="p">)</span><span class="n">vstart</span><span class="p">);</span>
+  <span class="k">for</span><span class="p">(;</span> <span class="n">p</span> <span class="o">+</span> <span class="n">PGSIZE</span> <span class="o">&lt;=</span> <span class="p">(</span><span class="kt">char</span><span class="o">*</span><span class="p">)</span><span class="n">vend</span><span class="p">;</span> <span class="n">p</span> <span class="o">+=</span> <span class="n">PGSIZE</span><span class="p">)</span>
+    <span class="n">kfree</span><span class="p">(</span><span class="n">p</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>そして<code class="language-plaintext highlighter-rouge">kfree</code>は指定されたアドレスから1ページ分<code class="language-plaintext highlighter-rouge">1</code>の値を書き込み、<code class="language-plaintext highlighter-rouge">run</code>構造体を指すポインターにキャストし、singly-linkedリストである<code class="language-plaintext highlighter-rouge">kmem.freelist</code>の先頭に挿入します。メモリページを使用する場合は<code class="language-plaintext highlighter-rouge">kalloc</code>関数がこの<code class="language-plaintext highlighter-rouge">kmem.freelist</code>からポインターを返します:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">struct</span> <span class="n">run</span> <span class="p">{</span>
+  <span class="k">struct</span> <span class="n">run</span> <span class="o">*</span><span class="n">next</span><span class="p">;</span>
+<span class="p">};</span>
+<span class="p">...</span>
+<span class="kt">void</span>
+<span class="nf">kfree</span><span class="p">(</span><span class="kt">char</span> <span class="o">*</span><span class="n">v</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="p">...</span>
+  <span class="c1">// Fill with junk to catch dangling refs.</span>
+  <span class="n">memset</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">PGSIZE</span><span class="p">);</span>
+
+  <span class="k">if</span><span class="p">(</span><span class="n">kmem</span><span class="p">.</span><span class="n">use_lock</span><span class="p">)</span>
+    <span class="n">acquire</span><span class="p">(</span><span class="o">&amp;</span><span class="n">kmem</span><span class="p">.</span><span class="n">lock</span><span class="p">);</span>
+  <span class="n">r</span> <span class="o">=</span> <span class="p">(</span><span class="k">struct</span> <span class="n">run</span><span class="o">*</span><span class="p">)</span><span class="n">v</span><span class="p">;</span>
+  <span class="n">r</span><span class="o">-&gt;</span><span class="n">next</span> <span class="o">=</span> <span class="n">kmem</span><span class="p">.</span><span class="n">freelist</span><span class="p">;</span>
+  <span class="n">kmem</span><span class="p">.</span><span class="n">freelist</span> <span class="o">=</span> <span class="n">r</span><span class="p">;</span>
+  <span class="k">if</span><span class="p">(</span><span class="n">kmem</span><span class="p">.</span><span class="n">use_lock</span><span class="p">)</span>
+    <span class="n">release</span><span class="p">(</span><span class="o">&amp;</span><span class="n">kmem</span><span class="p">.</span><span class="n">lock</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<h3 id="2段ページング">2段ページング</h3>
+
+<p>ここまででカーネルが指定されたメモリ範囲をページごとに割り当てる仕組みを追ったので、引き続き<code class="language-plaintext highlighter-rouge">kvmalloc</code>関数がいかに2段のページング構造をセットアップしていくのかを見ていきます。</p>
+
+<blockquote>
+  <p>オンラインで<code class="language-plaintext highlighter-rouge">x86 ページング</code>等を検索するとこのようなダイアグラムが見つかり、3つに分割された仮想アドレスが物理アドレスに変換される様子は理解出来るのですが、この構造をOS側からいかに使うのかを明確に理解するのは（少なくとも自分には）容易ではありません。
+<img src="/assets/images/paging-mmu-diagram.png" alt="paging-mmu-diagram" />
+ここでのキーポイントはこの2段のマッピングをセットアップするのはOS側の仕事であり、またどう使うかはOS側の自由ということです。具体的にはOSはまず1ページ分のメモリをページディレクトリ用に、もう1ページ分のメモリをページテーブル用に割り当てます。そしてそのページディレクトリとページテーブルに好きな仮想アドレスと狙った物理アドレスをエントリーとして書き込むことで望んだマッピングが作られます。ここでもう一つ重要なのがこのマッピングがページディレクトリのアドレスで指定され、それを<code class="language-plaintext highlighter-rouge">CR3</code>レジスターが保持しているということです。これにより<code class="language-plaintext highlighter-rouge">CR3</code>レジスタの値を書き換えることでプロセスごとの仮想アドレスから物理アドレスのマッピングを切り替えることが可能になります。そしてこれから追う<code class="language-plaintext highlighter-rouge">kvmalloc</code>関数はこのセットアップからマッピングの切り替えまで全体の流れを実行します。</p>
+</blockquote>
+
+<p><code class="language-plaintext highlighter-rouge">kvmalloc</code>は2段のページング構造をセットアップする<code class="language-plaintext highlighter-rouge">setupkvm</code>関数を呼びます。<code class="language-plaintext highlighter-rouge">setupkvm</code>はまず<code class="language-plaintext highlighter-rouge">kalloc</code>を呼び新たなページディレクトリの為のメモリページを<code class="language-plaintext highlighter-rouge">pgdir</code>変数にポインターとして格納します。その後キーとなる関数は<code class="language-plaintext highlighter-rouge">mapppages</code>関数で、渡されたページディレクト内に指定された仮想アドレスからページテーブルを作成し、その中のエントリーに物理アドレスを指定された範囲分書き込みます:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">pde_t</span><span class="o">*</span>
+<span class="nf">setupkvm</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="n">pde_t</span> <span class="o">*</span><span class="n">pgdir</span><span class="p">;</span>
+  <span class="k">struct</span> <span class="n">kmap</span> <span class="o">*</span><span class="n">k</span><span class="p">;</span>
+
+  <span class="k">if</span><span class="p">((</span><span class="n">pgdir</span> <span class="o">=</span> <span class="p">(</span><span class="n">pde_t</span><span class="o">*</span><span class="p">)</span><span class="n">kalloc</span><span class="p">())</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="c1">// ページディレクトリの1ページ分のメモリへのポインターを格納</span>
+    <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+  <span class="n">memset</span><span class="p">(</span><span class="n">pgdir</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">PGSIZE</span><span class="p">);</span>
+  <span class="k">if</span> <span class="p">(</span><span class="n">P2V</span><span class="p">(</span><span class="n">PHYSTOP</span><span class="p">)</span> <span class="o">&gt;</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="n">DEVSPACE</span><span class="p">)</span>
+    <span class="n">panic</span><span class="p">(</span><span class="s">"PHYSTOP too high"</span><span class="p">);</span>
+  <span class="k">for</span><span class="p">(</span><span class="n">k</span> <span class="o">=</span> <span class="n">kmap</span><span class="p">;</span> <span class="n">k</span> <span class="o">&lt;</span> <span class="o">&amp;</span><span class="n">kmap</span><span class="p">[</span><span class="n">NELEM</span><span class="p">(</span><span class="n">kmap</span><span class="p">)];</span> <span class="n">k</span><span class="o">++</span><span class="p">)</span>
+    <span class="k">if</span><span class="p">(</span><span class="n">mappages</span><span class="p">(</span><span class="n">pgdir</span><span class="p">,</span> <span class="n">k</span><span class="o">-&gt;</span><span class="n">virt</span><span class="p">,</span> <span class="n">k</span><span class="o">-&gt;</span><span class="n">phys_end</span> <span class="o">-</span> <span class="n">k</span><span class="o">-&gt;</span><span class="n">phys_start</span><span class="p">,</span>
+                <span class="p">(</span><span class="n">uint</span><span class="p">)</span><span class="n">k</span><span class="o">-&gt;</span><span class="n">phys_start</span><span class="p">,</span> <span class="n">k</span><span class="o">-&gt;</span><span class="n">perm</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+      <span class="n">freevm</span><span class="p">(</span><span class="n">pgdir</span><span class="p">);</span>
+      <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="p">}</span>
+  <span class="k">return</span> <span class="n">pgdir</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>具体的には<code class="language-plaintext highlighter-rouge">mappages</code>関数はページテーブルのエントリーに物理アドレスをページサイズごとに書き込み、指定された物理アドレスの範囲分を書き込むまでループします。ページテーブルのエントリーは<code class="language-plaintext highlighter-rouge">walkpgdir</code>関数で作成され、ポインターが返されます:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="kt">int</span>
+<span class="nf">mappages</span><span class="p">(</span><span class="n">pde_t</span> <span class="o">*</span><span class="n">pgdir</span><span class="p">,</span> <span class="kt">void</span> <span class="o">*</span><span class="n">va</span><span class="p">,</span> <span class="n">uint</span> <span class="n">size</span><span class="p">,</span> <span class="n">uint</span> <span class="n">pa</span><span class="p">,</span> <span class="kt">int</span> <span class="n">perm</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="kt">char</span> <span class="o">*</span><span class="n">a</span><span class="p">,</span> <span class="o">*</span><span class="n">last</span><span class="p">;</span>
+  <span class="n">pte_t</span> <span class="o">*</span><span class="n">pte</span><span class="p">;</span>
+
+  <span class="n">a</span> <span class="o">=</span> <span class="p">(</span><span class="kt">char</span><span class="o">*</span><span class="p">)</span><span class="n">PGROUNDDOWN</span><span class="p">((</span><span class="n">uint</span><span class="p">)</span><span class="n">va</span><span class="p">);</span>
+  <span class="n">last</span> <span class="o">=</span> <span class="p">(</span><span class="kt">char</span><span class="o">*</span><span class="p">)</span><span class="n">PGROUNDDOWN</span><span class="p">(((</span><span class="n">uint</span><span class="p">)</span><span class="n">va</span><span class="p">)</span> <span class="o">+</span> <span class="n">size</span> <span class="o">-</span> <span class="mi">1</span><span class="p">);</span>
+  <span class="k">for</span><span class="p">(;;){</span>
+    <span class="k">if</span><span class="p">((</span><span class="n">pte</span> <span class="o">=</span> <span class="n">walkpgdir</span><span class="p">(</span><span class="n">pgdir</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span>
+      <span class="k">return</span> <span class="o">-</span><span class="mi">1</span><span class="p">;</span>
+    <span class="k">if</span><span class="p">(</span><span class="o">*</span><span class="n">pte</span> <span class="o">&amp;</span> <span class="n">PTE_P</span><span class="p">)</span>
+      <span class="n">panic</span><span class="p">(</span><span class="s">"remap"</span><span class="p">);</span>
+    <span class="o">*</span><span class="n">pte</span> <span class="o">=</span> <span class="n">pa</span> <span class="o">|</span> <span class="n">perm</span> <span class="o">|</span> <span class="n">PTE_P</span><span class="p">;</span> <span class="c1">// 物理アドレスを割り当てられたページテーブルのエントリーに書き込む</span>
+    <span class="k">if</span><span class="p">(</span><span class="n">a</span> <span class="o">==</span> <span class="n">last</span><span class="p">)</span>
+      <span class="k">break</span><span class="p">;</span>
+    <span class="n">a</span> <span class="o">+=</span> <span class="n">PGSIZE</span><span class="p">;</span>
+    <span class="n">pa</span> <span class="o">+=</span> <span class="n">PGSIZE</span><span class="p">;</span>
+  <span class="p">}</span>
+  <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">walkpgdir</code>関数はまず指定された仮想アドレスである<code class="language-plaintext highlighter-rouge">va</code>をページディレクトリ内のインデックスに変換（先頭10ビットを抽出）し、渡されたページディレクトリへのポインターである<code class="language-plaintext highlighter-rouge">pgdir</code>からインデックス指定することでページディレクトリのエントリーを指すポインターを作り、<code class="language-plaintext highlighter-rouge">pde</code>変数に格納します。そしてそのページディレクトリのエントリーがすでに存在しているかどうかを<code class="language-plaintext highlighter-rouge">PTE_P</code>フラッグでチェックし、存在している場合はそのページディレクトリーのエントリーの値からページテーブルへのポインターを<code class="language-plaintext highlighter-rouge">pgtab</code>変数に格納します。存在しない場合は先にページテーブル用のメモリーを割り当て、そのアドレスをページディレクトリのエントリーの値として書き込みます。そしてこの分岐処理の後、ページテーブルのアドレスから<code class="language-plaintext highlighter-rouge">va</code>の真ん中10ビットをインデックス値として指定したページテーブルのエントリーへのポインターが返り値となります:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="n">pte_t</span> <span class="o">*</span>
+<span class="nf">walkpgdir</span><span class="p">(</span><span class="n">pde_t</span> <span class="o">*</span><span class="n">pgdir</span><span class="p">,</span> <span class="k">const</span> <span class="kt">void</span> <span class="o">*</span><span class="n">va</span><span class="p">,</span> <span class="kt">int</span> <span class="n">alloc</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="n">pde_t</span> <span class="o">*</span><span class="n">pde</span><span class="p">;</span>
+  <span class="n">pte_t</span> <span class="o">*</span><span class="n">pgtab</span><span class="p">;</span>
+
+  <span class="n">pde</span> <span class="o">=</span> <span class="o">&amp;</span><span class="n">pgdir</span><span class="p">[</span><span class="n">PDX</span><span class="p">(</span><span class="n">va</span><span class="p">)];</span> <span class="c1">// ページディレクトリエントリーへのポインターを格納</span>
+  <span class="k">if</span><span class="p">(</span><span class="o">*</span><span class="n">pde</span> <span class="o">&amp;</span> <span class="n">PTE_P</span><span class="p">){</span>
+    <span class="n">pgtab</span> <span class="o">=</span> <span class="p">(</span><span class="n">pte_t</span><span class="o">*</span><span class="p">)</span><span class="n">P2V</span><span class="p">(</span><span class="n">PTE_ADDR</span><span class="p">(</span><span class="o">*</span><span class="n">pde</span><span class="p">));</span> <span class="c1">// ページディレクトリエントリーの値からページテーブルへのポインターを格納</span>
+  <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+    <span class="k">if</span><span class="p">(</span><span class="o">!</span><span class="n">alloc</span> <span class="o">||</span> <span class="p">(</span><span class="n">pgtab</span> <span class="o">=</span> <span class="p">(</span><span class="n">pte_t</span><span class="o">*</span><span class="p">)</span><span class="n">kalloc</span><span class="p">())</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="c1">// 新規ページテーブルのメモリをアロケート</span>
+      <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+    <span class="c1">// Make sure all those PTE_P bits are zero.</span>
+    <span class="n">memset</span><span class="p">(</span><span class="n">pgtab</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">PGSIZE</span><span class="p">);</span>
+    <span class="c1">// The permissions here are overly generous, but they can</span>
+    <span class="c1">// be further restricted by the permissions in the page table</span>
+    <span class="c1">// entries, if necessary.</span>
+    <span class="o">*</span><span class="n">pde</span> <span class="o">=</span> <span class="n">V2P</span><span class="p">(</span><span class="n">pgtab</span><span class="p">)</span> <span class="o">|</span> <span class="n">PTE_P</span> <span class="o">|</span> <span class="n">PTE_W</span> <span class="o">|</span> <span class="n">PTE_U</span><span class="p">;</span> <span class="c1">// ページディレクトリエントリーに作成されたページテーブルのアドレスを書き込む</span>
+  <span class="p">}</span>
+  <span class="k">return</span> <span class="o">&amp;</span><span class="n">pgtab</span><span class="p">[</span><span class="n">PTX</span><span class="p">(</span><span class="n">va</span><span class="p">)];</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>ここまでで2段のページング構造がセットアップされる仕組みを追いました。では実際にxv6がどんな仮想メモリーのマップを作っているのかを見ていきます:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="k">struct</span> <span class="n">kmap</span> <span class="p">{</span>
+  <span class="kt">void</span> <span class="o">*</span><span class="n">virt</span><span class="p">;</span>
+  <span class="n">uint</span> <span class="n">phys_start</span><span class="p">;</span>
+  <span class="n">uint</span> <span class="n">phys_end</span><span class="p">;</span>
+  <span class="kt">int</span> <span class="n">perm</span><span class="p">;</span>
+<span class="p">}</span> <span class="n">kmap</span><span class="p">[]</span> <span class="o">=</span> <span class="p">{</span>
+ <span class="p">{</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="n">KERNBASE</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>             <span class="n">EXTMEM</span><span class="p">,</span>    <span class="n">PTE_W</span><span class="p">},</span> <span class="c1">// I/O space</span>
+ <span class="p">{</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="n">KERNLINK</span><span class="p">,</span> <span class="n">V2P</span><span class="p">(</span><span class="n">KERNLINK</span><span class="p">),</span> <span class="n">V2P</span><span class="p">(</span><span class="n">data</span><span class="p">),</span> <span class="mi">0</span><span class="p">},</span>     <span class="c1">// kern text+rodata</span>
+ <span class="p">{</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="n">data</span><span class="p">,</span>     <span class="n">V2P</span><span class="p">(</span><span class="n">data</span><span class="p">),</span>     <span class="n">PHYSTOP</span><span class="p">,</span>   <span class="n">PTE_W</span><span class="p">},</span> <span class="c1">// kern data+memory</span>
+ <span class="p">{</span> <span class="p">(</span><span class="kt">void</span><span class="o">*</span><span class="p">)</span><span class="n">DEVSPACE</span><span class="p">,</span> <span class="n">DEVSPACE</span><span class="p">,</span>      <span class="mi">0</span><span class="p">,</span>         <span class="n">PTE_W</span><span class="p">},</span> <span class="c1">// more devices</span>
+<span class="p">};</span>
+</code></pre></div></div>
+
+<p>上記がソースコード上でのマッピングですが、実際の値は以下のようになります:</p>
+
+<ul>
+  <li>仮想アドレス: <code class="language-plaintext highlighter-rouge">KERNBASE</code>（0x80000000）を物理アドレス: <code class="language-plaintext highlighter-rouge">0</code>から<code class="language-plaintext highlighter-rouge">EXTMEM</code>（0x100000）まで</li>
+  <li>仮想アドレス: <code class="language-plaintext highlighter-rouge">KERNLINK</code>（0x80100000）を物理アドレス: <code class="language-plaintext highlighter-rouge">KERNLINK</code>（0x100000）から<code class="language-plaintext highlighter-rouge">V2P(data)</code> (カーネルイメージのread-onlyデータ）まで</li>
+  <li>仮想アドレス: <code class="language-plaintext highlighter-rouge">data</code>を物理アドレス: <code class="language-plaintext highlighter-rouge">V2P(data)</code>から<code class="language-plaintext highlighter-rouge">PHYSTOP</code>（0xE000000: 235MB）まで</li>
+  <li>仮想アドレス: <code class="language-plaintext highlighter-rouge">DEVSPACE</code>（0xFE000000）を物理アドレス: <code class="language-plaintext highlighter-rouge">DEVSPACE</code>（0xFE000000）から <code class="language-plaintext highlighter-rouge">0</code>まで</li>
+</ul>
+
+<p>カーネルのメイン関数にある<code class="language-plaintext highlighter-rouge">kvmalloc</code>関数は上記のマッピングを作成し、最終的に<code class="language-plaintext highlighter-rouge">switchkvm</code>関数が<code class="language-plaintext highlighter-rouge">CR3</code>レジスターにそのページディレクトリのアドレスを書き込むことでこのマッピングが有効になります。カーネルの命令列へのマッピングは<code class="language-plaintext highlighter-rouge">entrypgdir</code>から変わっていないので命令実行に影響は無くそのまま実行が進む訳です。</p>
+
+<h2 id="ユーザーモード">ユーザーモード</h2>
+
+<p>上記にあるようにカーネルのメイン関数では割り込みやデバイスの初期化の関数の後に<code class="language-plaintext highlighter-rouge">kinit2(P2V(4*1024*1024), P2V(PHYSTOP))</code>と<code class="language-plaintext highlighter-rouge">userinit()</code>という二つの関数呼び出しが見られます。一つ目の<code class="language-plaintext highlighter-rouge">kinit2</code>は仮想アドレス<code class="language-plaintext highlighter-rouge">0x80400000</code>から<code class="language-plaintext highlighter-rouge">0x8E000000</code>を利用可能なページに割り当て、二つ目の<code class="language-plaintext highlighter-rouge">userinit</code>はユーザープロセスの為にコンテクストやメモリー、割り込み等の設定を行います。</p>
+
+<p>この<code class="language-plaintext highlighter-rouge">userinit</code>関数を見ていくと、<code class="language-plaintext highlighter-rouge">setupkvm</code>関数が呼ばれているのが見られます。これはユーザーモード下で割り込みやシステムコールがあった場合にページディレクトリを切り替えなくてもカーネルのメモリーを参照できるようにする為であり、それが先述したようにユーザーモードでもカーネルのマッピングを使う理由になります。</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span> <span class="nf">userinit</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="k">struct</span> <span class="n">proc</span> <span class="o">*</span><span class="n">p</span><span class="p">;</span>
+  <span class="k">extern</span> <span class="kt">char</span> <span class="n">_binary_initcode_start</span><span class="p">[],</span> <span class="n">_binary_initcode_size</span><span class="p">[];</span>
+
+  <span class="n">p</span> <span class="o">=</span> <span class="n">allocproc</span><span class="p">();</span>
+
+  <span class="n">initproc</span> <span class="o">=</span> <span class="n">p</span><span class="p">;</span>
+  <span class="k">if</span> <span class="p">((</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">pgdir</span> <span class="o">=</span> <span class="n">setupkvm</span><span class="p">())</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span>
+    <span class="n">panic</span><span class="p">(</span><span class="s">"userinit: out of memory?"</span><span class="p">);</span>
+  <span class="n">inituvm</span><span class="p">(</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">pgdir</span><span class="p">,</span> <span class="n">_binary_initcode_start</span><span class="p">,</span> <span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="n">_binary_initcode_size</span><span class="p">);</span>
+  <span class="p">...</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">setupkvm</code>関数がカーネルのマッピングをセットアップすると<code class="language-plaintext highlighter-rouge">userinit</code>関数はそのページディレクトリと共に<code class="language-plaintext highlighter-rouge">initcode</code>へのポインターとサイズを<code class="language-plaintext highlighter-rouge">inituvm</code>関数に渡して呼び出します。</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">void</span>
+<span class="nf">inituvm</span><span class="p">(</span><span class="n">pde_t</span> <span class="o">*</span><span class="n">pgdir</span><span class="p">,</span> <span class="kt">char</span> <span class="o">*</span><span class="n">init</span><span class="p">,</span> <span class="n">uint</span> <span class="n">sz</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="kt">char</span> <span class="o">*</span><span class="n">mem</span><span class="p">;</span>
+
+  <span class="k">if</span><span class="p">(</span><span class="n">sz</span> <span class="o">&gt;=</span> <span class="n">PGSIZE</span><span class="p">)</span>
+    <span class="n">panic</span><span class="p">(</span><span class="s">"inituvm: more than a page"</span><span class="p">);</span>
+  <span class="n">mem</span> <span class="o">=</span> <span class="n">kalloc</span><span class="p">();</span>
+  <span class="n">memset</span><span class="p">(</span><span class="n">mem</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">PGSIZE</span><span class="p">);</span>
+  <span class="n">mappages</span><span class="p">(</span><span class="n">pgdir</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">PGSIZE</span><span class="p">,</span> <span class="n">V2P</span><span class="p">(</span><span class="n">mem</span><span class="p">),</span> <span class="n">PTE_W</span><span class="o">|</span><span class="n">PTE_U</span><span class="p">);</span>
+  <span class="n">memmove</span><span class="p">(</span><span class="n">mem</span><span class="p">,</span> <span class="n">init</span><span class="p">,</span> <span class="n">sz</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>上記の<code class="language-plaintext highlighter-rouge">inituvim</code>関数はまず<code class="language-plaintext highlighter-rouge">kalloc</code>関数を呼び出して新たなページをアロケートし、<code class="language-plaintext highlighter-rouge">0</code>の値でその中身をリセットします。そして仮想アドレスの<code class="language-plaintext highlighter-rouge">0</code>とそのページへの物理アドレス<code class="language-plaintext highlighter-rouge">V2P(mem)</code>を<code class="language-plaintext highlighter-rouge">mappages</code>に渡して呼び出しています。これによって仮想アドレスの<code class="language-plaintext highlighter-rouge">0</code>がアロケートされた新規のメモリページを指す構造が出来あがります。最後に<code class="language-plaintext highlighter-rouge">memmove</code>がプロセスの初期化命令列である<code class="language-plaintext highlighter-rouge">init</code>をそのページに書き込むことでユーザープロセスが<code class="language-plaintext highlighter-rouge">EIP</code>の値として<code class="language-plaintext highlighter-rouge">0</code>のアドレスから実行できる環境が整う訳です。</p>
+
+<h2 id="まとめ">まとめ</h2>
+
+<p>長い記事となってしまいましたが、前編と後編を通してxv6がどのようにメモリーを管理、参照するかを順序立てて追いました。記事に書き出すのは自分の理解を整理、確認するいい機会です。これが誰かの為に役に立てばと思います。</p>
+
+      </div>
+    </main><footer class="site-footer h-card">
+  <data class="u-url" href="/jp/"></data>
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">yohei.codes</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col footer-col-1">
+        <ul class="contact-list">
+          <li class="p-name">yohei.codes</li><li><a class="u-email" href="mailto:me@yohei.codes">me@yohei.codes</a></li></ul>
+      </div>
+
+      <div class="footer-col footer-col-2"><ul class="social-media-list"><li><a href="https://github.com/ykskb"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#github"></use></svg> <span class="username">ykskb</span></a></li><li><a href="https://www.linkedin.com/in/yohei-kusakabe"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#linkedin"></use></svg> <span class="username">yohei-kusakabe</span></a></li><li><a href="https://www.twitter.com/yo__ohei"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#twitter"></use></svg> <span class="username">yo__ohei</span></a></li></ul>
+</div>
+
+      <div class="footer-col footer-col-3">
+        <p>I enjoy computer science stuff.</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+</body>
+
+</html>

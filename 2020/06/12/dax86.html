@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>dax86: xv6-runnable x86 Emulator for Study Purpose | yohei.codes</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="dax86: xv6-runnable x86 Emulator for Study Purpose" />
+<meta property="og:locale" content="en" />
+<meta name="description" content="dax86: xv6-runnable x86 Emulator for Study Purpose" />
+<meta property="og:description" content="dax86: xv6-runnable x86 Emulator for Study Purpose" />
+<link rel="canonical" href="https://yohei.codes/2020/06/12/dax86.html" />
+<meta property="og:url" content="https://yohei.codes/2020/06/12/dax86.html" />
+<meta property="og:site_name" content="yohei.codes" />
+<meta property="og:image" content="https://yohei.codes/assets/images/dax86-xv6.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2020-06-12T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://yohei.codes/assets/images/dax86-xv6.png" />
+<meta property="twitter:title" content="dax86: xv6-runnable x86 Emulator for Study Purpose" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2020-06-12T00:00:00+00:00","datePublished":"2020-06-12T00:00:00+00:00","description":"dax86: xv6-runnable x86 Emulator for Study Purpose","headline":"dax86: xv6-runnable x86 Emulator for Study Purpose","image":"https://yohei.codes/assets/images/dax86-xv6.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://yohei.codes/2020/06/12/dax86.html"},"url":"https://yohei.codes/2020/06/12/dax86.html"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="https://yohei.codes/feed.xml" title="yohei.codes" /><script>
+if(!(window.doNotTrack === "1" || navigator.doNotTrack === "1" || navigator.doNotTrack === "yes" || navigator.msDoNotTrack === "1")) {
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-52885755-2', 'auto');
+  ga('send', 'pageview');
+}
+</script>
+  
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/images/favicon/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/favicon/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/favicon/favicon-16x16.png">
+    <link rel="manifest" href="/assets/images/favicon/manifest.json">
+    <link rel="mask-icon" href="/assets/images/favicon/safari-pinned-tab.svg" color="#5bbad5">
+    <meta name="msapplication-TileColor" content="#da532c">
+    <meta name="theme-color" content="#ffffff">
+  </head><body><header class="site-header" role="banner">
+
+    <div class="wrapper"><a class="site-title" rel="author" href="/">yohei.codes</a><nav class="site-nav">
+          <input type="checkbox" id="nav-trigger" class="nav-trigger" />
+          <label for="nav-trigger">
+            <span class="menu-icon">
+              <svg viewBox="0 0 18 15" width="18px" height="15px">
+                <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.032C17.335,0,18,0.665,18,1.484L18,1.484z M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.032C17.335,6.031,18,6.696,18,7.516L18,7.516z M18,13.516C18,14.335,17.335,15,16.516,15H1.484 C0.665,15,0,14.335,0,13.516l0,0c0-0.82,0.665-1.483,1.484-1.483h15.032C17.335,12.031,18,12.695,18,13.516L18,13.516z"/>
+              </svg>
+            </span>
+          </label>
+  
+          <div class="trigger"><a class="page-link" href="/about/">About</a>
+    
+    [          
+    
+        English ]
+    
+
+    
+    [          
+    
+        
+            <a href="/jp/2020/06/12/dax86.html">日本語</a> ]
+        
+    
+</div>
+        </nav></div>
+  </header><main class="page-content" aria-label="Content">
+      <div class="wrapper">
+        <h1 id="dax86-xv6-runnable-x86-emulator-for-study-purpose">dax86: xv6-runnable x86 Emulator for Study Purpose</h1>
+
+<p>I wrote an x86 simulator that runs a small OS, xv6 for study purpose without translating binaries or memory. Everything is implemented C codes.</p>
+
+<p>Repository Link: <a href="https://github.com/ykskb/dax86">https://github.com/ykskb/dax86</a></p>
+
+<p>Here’s some key points about it (excerpt from README):</p>
+
+<blockquote>
+  <p>Why:</p>
+
+  <ul>
+    <li>I wanted to learn how an OS runs on CPUs at architecture / instruction level.</li>
+  </ul>
+
+  <p>What:</p>
+
+  <ul>
+    <li>Runs vanilla xv6 (memfs) image from boot.</li>
+    <li>Each instruction is manually implemented and executed sequentially without binary translation, pipeline or OoOE.</li>
+    <li>Representation of logic is prioritized over the performance. Codes have bunch of comments covering the instructions and the hardware mechanism as well.</li>
+  </ul>
+</blockquote>
+
+<p>In this article, I’d like to share some of the processes I went through to learn about the CPU architecture and develop this emulator as well as the difficulties I was faced with.</p>
+
+<blockquote>
+  <p>I’m writing about some of my key learnings in separate articles:</p>
+
+  <ul>
+    <li><a href="/2020/06/13/xv6-boot-block.html">xv6 image: Boot Sector</a></li>
+    <li><a href="/2020/06/18/xv6-memory-1.html">xv6: Memory Addressing Part 1</a></li>
+    <li><a href="/2020/07/31/xv6-memory-2.html">xv6: Memory Addressing Part 2</a></li>
+    <li>xv6: Device Emulation (coming soon)</li>
+  </ul>
+</blockquote>
+
+<h2 id="start">Start</h2>
+
+<p>Firstly I started this project with <a href="https://book.mynavi.jp/ec/products/detail/id=41347">this Japanese book</a>. Whether you find the anime girl on cover cute or distracting, it’s a great book to get anyone started with CPU emulator development. It covers some of the core x86 instructions like <code class="language-plaintext highlighter-rouge">mov</code>, <code class="language-plaintext highlighter-rouge">add</code>, <code class="language-plaintext highlighter-rouge">push</code> and <code class="language-plaintext highlighter-rouge">call</code> as well as the basics of ModRM. Some of the structure for instruction definition and execution in dax86 comes from this book.</p>
+
+<p>So I got a CPU emulator somewhat shaped and it could run some testing binaries. However it was nowhere near to run an OS at this point. The emulator didn’t have any device, segment registers or control registers and it only supported 32-bit binary which is only applicable after switching to the protected mode in the real world of x86. There were so many instructions to be implemented as well.</p>
+
+<h2 id="booting">Booting</h2>
+
+<p>Having set up the goal of running xv6, I started to implement all the single-byte instructions while doing research on x86 architecture and xv6 internals concurrently. On the x86 architecture, I found about things like A20 line, segmentation, global descriptor table and paging. On the xv6 side, reading the boot block indicated I would need those different modes of memory addressing working as well as some devices like keyboard and disk.</p>
+
+<p>At this point, as I was mostly working on the booting part, I could still write small chunk of assembly or c codes to exercise somewhat TDD approach. I set the expected behaviors with the test cases and tried to pass them. (You can see them in <code class="language-plaintext highlighter-rouge">tests</code> directory.) One thing about this is that those expected behaviors were entirely from my understanding of each component. I kept feeling uncertain there and often ended up being wrong. For example, I had misunderstood the base address calculation on GDT (which bits go where), so my tests were passing, however later on it came back as a hard bug when I was working on TSS (task state segment).</p>
+
+<p>In the booting part, I found these 2 parts as the key learnings: kernel code loading from disk to memory and the page directory switching in page size extension. (Specifically the identical mapping to the first virtual mapping.) I’ve covered these in details in separate articles, but I must say figuring out the linker configuration and image creation on xv6 wasn’t that easy for me.</p>
+
+<h2 id="os-initialization">OS Initialization</h2>
+
+<p>Once I made booting work, I reached the main function of xv6. This is where xv6 configures more devices and chips as well as the memory page initialization, eventually starting the OS’ scheduler loop in the user mode. First challenge for me here was MP (multi-processor) configuration. It involves MP configuration table, IOAPIC and LAPIC for multi-processor systems, where hardware interrupts need to be routed as configured among multiple processors. There are documentations available online, but it’s often challenging when you actually try to emulate them because in many cases those docs only touch the concept and never give you the whole data flow in details. Generally I ended up landing on the CS course materials in university websites. It was obvious this kind of challenges were not developers’ daily problems and I almost never found the solution on Stackoverflow. After learning about them, I ended up using threads with locks for device emulation to send and receive IO data asynchronously and separately from the main thread.</p>
+
+<p>The second half of the main function got me stuck for some time. It was the TSS (task state segment) as mentioned above and also ISR (interrupt service routine), both of which are about switching the context of instruction execution. At this point, having a number of init processes run before hitting the issue, I couldn’t create the test case really to exercise TDD approach. Instead I did quite dirty debugging by targeting specific instruction pointer (EIP) and printing out some key info on the emulator. Literally I printed out some memory region of certain range and debugged the issues. It sometimes felt like locating some broken bridge out of world map. Only thing I could do was scoping the search area gradually with some instinct and creativity as a clueless investigator.</p>
+
+<h2 id="first-shell-command">First Shell Command</h2>
+
+<p>Last one of the challenges was actually a bit funny. It was keyboard mapping after I confirmed the shell running in the user mode. Of course xv6 is a real OS to run on hardware, so it handles the scan code instead of ASCII characters. Not wanting to fiddle with the TTY setting of a running environment too much, I made a map from ASCII back to scan code. Once I finished it, I confirmed I could run <code class="language-plaintext highlighter-rouge">ls</code>. It was quite slow but I think I can say it was the best <code class="language-plaintext highlighter-rouge">ls</code> command I’ve ever run.</p>
+
+<p><img src="/assets/images/dax86-xv6.png" alt="dax86-xv6" /></p>
+
+<h2 id="p-s">P. S.</h2>
+
+<p>At the point of writing this article, commands like <code class="language-plaintext highlighter-rouge">ls</code>, <code class="language-plaintext highlighter-rouge">mkdir</code> and <code class="language-plaintext highlighter-rouge">echo</code> run fine. However it doesn’t seem to be so stable yet. There seem to be some spots possibly wrong with the user modes’ page mapping or context switching, resulting in “remap” error from the OS. Segmentation error was occasionally observed at certain EIP address in the user mode as well. These indicate there is still a bit more for me to investigate on the implementation and there are multiple parts in xv6 that I haven’t fully understood yet. Hopefully I can achieve them and share more key findings in this blog. Thanks for reading :)</p>
+
+      </div>
+    </main><footer class="site-footer h-card">
+  <data class="u-url" href="/"></data>
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">yohei.codes</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col footer-col-1">
+        <ul class="contact-list">
+          <li class="p-name">yohei.codes</li><li><a class="u-email" href="mailto:me@yohei.codes">me@yohei.codes</a></li></ul>
+      </div>
+
+      <div class="footer-col footer-col-2"><ul class="social-media-list"><li><a href="https://github.com/ykskb"><svg class="svg-icon"><use xlink:href="/assets/minima-social-icons.svg#github"></use></svg> <span class="username">ykskb</span></a></li><li><a href="https://www.linkedin.com/in/yohei-kusakabe"><svg class="svg-icon"><use xlink:href="/assets/minima-social-icons.svg#linkedin"></use></svg> <span class="username">yohei-kusakabe</span></a></li><li><a href="https://www.twitter.com/yo__ohei"><svg class="svg-icon"><use xlink:href="/assets/minima-social-icons.svg#twitter"></use></svg> <span class="username">yo__ohei</span></a></li></ul>
+</div>
+
+      <div class="footer-col footer-col-3">
+        <p>I enjoy computer science stuff.</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+</body>
+
+</html>

@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="jp"><head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>スレッド、clone、futexとCMPXCHG | yohei.codes</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="スレッド、clone、futexとCMPXCHG" />
+<meta property="og:locale" content="jp" />
+<meta name="description" content="スレッド、clone、futexとCMPXCHG" />
+<meta property="og:description" content="スレッド、clone、futexとCMPXCHG" />
+<link rel="canonical" href="https://yohei.codes/jp/2023/05/21/thread-clone-futex.html" />
+<meta property="og:url" content="https://yohei.codes/2023/05/21/thread-clone-futex.html" />
+<meta property="og:site_name" content="yohei.codes" />
+<meta property="og:image" content="https://yohei.codes/assets/images/screenshot.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2023-05-21T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://yohei.codes/assets/images/screenshot.png" />
+<meta property="twitter:title" content="スレッド、clone、futexとCMPXCHG" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2023-05-21T00:00:00+00:00","datePublished":"2023-05-21T00:00:00+00:00","description":"スレッド、clone、futexとCMPXCHG","headline":"スレッド、clone、futexとCMPXCHG","image":"https://yohei.codes/assets/images/screenshot.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://yohei.codes/2023/05/21/thread-clone-futex.html"},"url":"https://yohei.codes/2023/05/21/thread-clone-futex.html"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/jp/assets/main.css"><link type="application/atom+xml" rel="alternate" href="https://yohei.codes/jp/feed.xml" title="yohei.codes" /><script>
+if(!(window.doNotTrack === "1" || navigator.doNotTrack === "1" || navigator.doNotTrack === "yes" || navigator.msDoNotTrack === "1")) {
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-52885755-2', 'auto');
+  ga('send', 'pageview');
+}
+</script>
+  
+<link rel="apple-touch-icon" sizes="180x180" href="/jp/assets/images/favicon/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/jp/assets/images/favicon/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/jp/assets/images/favicon/favicon-16x16.png">
+    <link rel="manifest" href="/jp/assets/images/favicon/manifest.json">
+    <link rel="mask-icon" href="/jp/assets/images/favicon/safari-pinned-tab.svg" color="#5bbad5">
+    <meta name="msapplication-TileColor" content="#da532c">
+    <meta name="theme-color" content="#ffffff">
+  </head><body><header class="site-header" role="banner">
+
+    <div class="wrapper"><a class="site-title" rel="author" href="/jp/">yohei.codes</a><nav class="site-nav">
+          <input type="checkbox" id="nav-trigger" class="nav-trigger" />
+          <label for="nav-trigger">
+            <span class="menu-icon">
+              <svg viewBox="0 0 18 15" width="18px" height="15px">
+                <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.032C17.335,0,18,0.665,18,1.484L18,1.484z M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.032C17.335,6.031,18,6.696,18,7.516L18,7.516z M18,13.516C18,14.335,17.335,15,16.516,15H1.484 C0.665,15,0,14.335,0,13.516l0,0c0-0.82,0.665-1.483,1.484-1.483h15.032C17.335,12.031,18,12.695,18,13.516L18,13.516z"/>
+              </svg>
+            </span>
+          </label>
+  
+          <div class="trigger"><a class="page-link" href="/jp/about/">About</a>
+    
+    [          
+    
+        
+            <a href=" /2023/05/21/thread-clone-futex.html">English</a> ]
+        
+    
+
+    
+    [          
+    
+        日本語 ]
+    
+</div>
+        </nav></div>
+  </header><main class="page-content" aria-label="Content">
+      <div class="wrapper">
+        <h1 id="スレッドclonefutexとcmpxchg">スレッド、clone、futexとCMPXCHG</h1>
+
+<p>これは、スレッド（もしくはpthread）に関連するトピックについて、自分が過去に断続的に取ったメモのページです。理解を整理するためにまとめました。</p>
+
+<h2 id="pthreadの内部">pthreadの内部</h2>
+
+<p><a href="https://man7.org/linux/man-pages/man7/pthreads.7.html">pthreads</a>は<a href="https://man7.org/linux/man-pages/man2/clone.2.html"><code class="language-plaintext highlighter-rouge">clone</code></a>を呼び出す。これにより<code class="language-plaintext highlighter-rouge">task_struct</code>が作成される。</p>
+
+<blockquote>
+  <p>メモ:</p>
+
+  <ul>
+    <li>
+      <p>pthread（POSIXスレッド）はlibcの一部。ほとんどのLinuxではglibc（GNU Cライブラリ）によって実装されている。</p>
+    </li>
+    <li>
+      <p>ユーザー空間で実装され、<code class="language-plaintext highlighter-rouge">clone()</code>や<a href="https://man7.org/linux/man-pages/man2/futex.2.html"><code class="language-plaintext highlighter-rouge">futex</code></a>などのシステムコールを通じてカーネルとやり取りする。</p>
+    </li>
+    <li>
+      <p><a href="https://man7.org/linux/man-pages/man2/fork.2.html"><code class="language-plaintext highlighter-rouge">fork()</code></a>も<code class="language-plaintext highlighter-rouge">clone()</code>を呼び出すが、異なるパラメータでの呼び出しになる。</p>
+    </li>
+  </ul>
+</blockquote>
+
+<ul>
+  <li>
+    <p><code class="language-plaintext highlighter-rouge">clone()</code>には次のような異なるフラグが存在する：</p>
+
+    <ul>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_VM</code>: メモリ空間（<code class="language-plaintext highlighter-rouge">fork()</code>はメモリ空間を共有しない）</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_FS</code>: ファイルシステム</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_FILES</code>: ファイルディスクリプタ</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_SIGHAND</code>: シグナルハンドラ</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_THREAD</code>: スレッド</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_PARENT_SETTID</code>:</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_CHILD_CLEARTID</code>:</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<blockquote>
+  <p>メモ: libc vs カーネルのシステムコール</p>
+
+  <p>カーネルのシステムコールは移植性と安全性のためにlibcが標準インターフェイスとなる。<code class="language-plaintext highlighter-rouge">man 2 [名前]</code>はカーネルのシステムコールを説明し、<code class="language-plaintext highlighter-rouge">man 3 [名前]</code>はlibcの関数を説明するが、<code class="language-plaintext highlighter-rouge">man 2</code>でもライブラリセクションにlibcが表示されることが多い。</p>
+
+  <p>libc関数が単なるラッパーか、システムコールの上にさらにロジックを持っているかを調べるためには、その関数の内部や知識が必要。しかし、関数が<code class="language-plaintext highlighter-rouge">man 3</code>にしか存在しない場合、それはlibcの中でシステムコールをラップしているカスタム関数であることが分かる。</p>
+</blockquote>
+
+<h2 id="カーネルの観点">カーネルの観点</h2>
+
+<p>プロセスとスレッドの両方は、カーネル内で<code class="language-plaintext highlighter-rouge">task_struct</code>として扱われる。</p>
+
+<ul>
+  <li>
+    <p>スケジューリング: 統一タスクスケジューリング</p>
+
+    <p>カーネルはプロセスとスレッドを異なる方法でスケジュールしない。</p>
+
+    <ul>
+      <li>
+        <p>プリエンプティブマルチタスキング: OSはスレッド間で中断し、切り替えを行うことができる。（OSはハードウェアのタイマー割り込みを使用。）</p>
+      </li>
+      <li>
+        <p>マルチタスキングの基準:</p>
+
+        <ul>
+          <li>
+            <p>タイムスライス（クォンタム）</p>
+          </li>
+          <li>
+            <p>I/O操作</p>
+          </li>
+          <li>
+            <p>優先順位</p>
+          </li>
+        </ul>
+      </li>
+      <li>
+        <p>完全公平スケジューラ（CFS）がデフォルト。リアルタイムのための他のポリシーとして、<code class="language-plaintext highlighter-rouge">SCHED_FIFO</code>と<code class="language-plaintext highlighter-rouge">SCHED_RR</code>なども存在。</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>スレッドの状態（レジスタ、プログラムカウンタ、スタックポインタなど）は<code class="language-plaintext highlighter-rouge">スレッド制御ブロック（TCB）</code>として保存され、プロセスの状態は<code class="language-plaintext highlighter-rouge">プロセス制御ブロック（PCB）</code>として保存される。</p>
+  </li>
+  <li>
+    <p>スレッドとプロセスの違い:</p>
+
+    <ul>
+      <li>
+        <p>スレッドの<code class="language-plaintext highlighter-rouge">task_struct</code>はプロセスのスレッドグループの一部となる。</p>
+      </li>
+      <li>
+        <p>スレッドの構造体は共有リソースを指す。</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="カーネルスケジュールの制御">カーネルスケジュールの制御</h2>
+
+<ul>
+  <li>
+    <p>CPUアフィニティ: スレッド/プロセスが実行できるCPUコアを決定します。</p>
+
+    <p>スレッドを特定のコアにバインドし、コンテキストスイッチを減少させ、キャッシュ利用効率を向上させる為に使用。</p>
+
+    <ul>
+      <li>
+        <p><a href="https://man7.org/linux/man-pages/man2/sched_setaffinity.2.html"><code class="language-plaintext highlighter-rouge">sched_setaffinity(pid, cpusetsize, mask)</code></a></p>
+      </li>
+      <li>
+        <p><a href="https://linux.die.net/man/2/sched_getaffinity"><code class="language-plaintext highlighter-rouge">sched_getaffinity(pid, cpusetsize, mask)</code></a></p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>ポリシー: 異なるポリシーを設定できる。</p>
+
+    <p><a href="https://man7.org/linux/man-pages/man2/sched_setscheduler.2.html"><code class="language-plaintext highlighter-rouge">sched_setscheduler(pid, policy, param)</code></a> と<code class="language-plaintext highlighter-rouge">sched_getscheduler(pid)</code></p>
+
+    <ul>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">SCHED_OTHER</code>: デフォルトのLinuxタイムシェアリングスケジューラ</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">SCHED_FIFO</code>: 先入れ先出しのリアルタイムスケジューリング</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">SCHED_RR</code>: ラウンドロビンのリアルタイムスケジューリング</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">SCHED_IDLE</code>: バックグラウンドタスク用の非常に低い優先度</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">SCHED_BATCH</code>: バッチ処理ジョブに適した設定</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>優先順位: 優先順位も設定できる。</p>
+
+    <p><a href="https://linux.die.net/man/2/setpriority"><code class="language-plaintext highlighter-rouge">setpriority(which, who, priority)</code></a> と<code class="language-plaintext highlighter-rouge">getpriority(which, who)</code></p>
+
+    <ul>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">type</code>: <code class="language-plaintext highlighter-rouge">PRIO_PROCESS</code>など</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">who</code>: 識別子</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">priority</code>: 新しい優先度の値</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>コマンド:</p>
+
+    <p><code class="language-plaintext highlighter-rouge">nice</code>と<code class="language-plaintext highlighter-rouge">renice</code>は優先度を変更する。</p>
+
+    <ul>
+      <li>値は<code class="language-plaintext highlighter-rouge">-20</code>（最も高い優先度）から<code class="language-plaintext highlighter-rouge">19</code>（最も低い優先度）の範囲。</li>
+    </ul>
+  </li>
+  <li>
+    <p>pthread:</p>
+
+    <ul>
+      <li>
+        <p><a href="https://man7.org/linux/man-pages/man3/pthread_setschedparam.3.html"><code class="language-plaintext highlighter-rouge">pthread_setschedparam</code></a> と<code class="language-plaintext highlighter-rouge">pthread_getschedparam</code>: スケジューリングポリシーとパラメタ</p>
+      </li>
+      <li>
+        <p><a href="https://man7.org/linux/man-pages/man3/pthread_attr_setschedpolicy.3.html"><code class="language-plaintext highlighter-rouge">pthread_attr_setschedpolicy</code></a> と<code class="language-plaintext highlighter-rouge">pthread_attr_setschedparam</code>: スレッドの属性</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="ユーザーレベルスレッド">ユーザーレベルスレッド</h2>
+
+<ul>
+  <li>
+    <p>コルーチン: 実行を一時停止し、後で再開できる関数。Python（async/await）、Kotlin、Luaで一般的。</p>
+  </li>
+  <li>
+    <p>ファイバー: コルーチンに似ているが、一般的により汎用的。RubyやC++にライブラリあり。</p>
+  </li>
+  <li>
+    <p><code class="language-plaintext highlighter-rouge">m:n</code>スレッド: <code class="language-plaintext highlighter-rouge">m</code>個のユーザーレベルスレッドがそれより少数の<code class="language-plaintext highlighter-rouge">n</code>個のカーネルスレッドにマッピングされます。</p>
+
+    <ul>
+      <li>
+        <p>利点: 柔軟性 / <code class="language-plaintext highlighter-rouge">n</code>を調整可能 / コンテキストスイッチなし / ブロッキング操作を避ける処理可能</p>
+      </li>
+      <li>
+        <p>欠点: 複雑 / デバッグ / 限定的なOSサポート（LinuxとWindowsは<code class="language-plaintext highlighter-rouge">1:1</code>スレッドモデルを使用）</p>
+      </li>
+      <li>
+        <p>OSレベル: 単純化そして効率化のためほとんど<code class="language-plaintext highlighter-rouge">1:1</code>（古いSolarisとGNU Portable Threadsは<code class="language-plaintext highlighter-rouge">m:n</code>マッピングを提供）</p>
+      </li>
+      <li>
+        <p>例:</p>
+
+        <ul>
+          <li>
+            <p>Go: <code class="language-plaintext highlighter-rouge">goroutines</code>は少数のOSスレッドにスケジュールされる。</p>
+          </li>
+          <li>
+            <p>Erlang: BEAM仮想マシンを通じて、軽量プロセスは少数のOSスレッドにスケジュールされる。</p>
+          </li>
+          <li>
+            <p>NodeJS: モデルは違うが、イベントループ（イベント駆動アーキテクチャ）を通じて少数のスレッドで複数のタスクが並行して処理される。</p>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<blockquote>
+  <p><code class="language-plaintext highlighter-rouge">1:1</code>モデルのみの言語</p>
+
+  <p>JavaやRustは<code class="language-plaintext highlighter-rouge">m:n</code>やグリーンスレッドのモデルを言語として提供せず、<code class="language-plaintext highlighter-rouge">1:1</code>のOSネイティブなスレッドの呼び出しのみを言語としてサポートする。</p>
+
+  <p>それに伴いこれらの言語では<code class="language-plaintext highlighter-rouge">m:n</code>、グリーンスレッドやファイバーの機能は言語サポート外のライブラリとして実装、提供される。</p>
+</blockquote>
+
+<h2 id="同期機構">同期機構</h2>
+
+<p>複数のスレッドがある場合、競合を処理する必要あり。pthreadは<code class="language-plaintext highlighter-rouge">ミューテックス</code>、<code class="language-plaintext highlighter-rouge">条件変数</code>、<code class="language-plaintext highlighter-rouge">セマフォ</code>などの同期プリミティブを提供。</p>
+
+<ul>
+  <li>
+    <p><strong>Mutex</strong> (<code class="language-plaintext highlighter-rouge">pthread_mutex_t</code>): 一度に1つのスレッドのみが特定のコード（メモリ）にアクセスできるようにする。</p>
+
+    <ul>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">futex</code>を使用。</p>
+      </li>
+      <li>
+        <p>所有権がある: ロックの所有者スレッドだけが更新できる。</p>
+      </li>
+      <li>
+        <p>実装: 内部ステート（カーネルまたはOSがスレッドのblockとwakeupのメカニズムを提供）</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p><strong>Condition variable</strong> (<code class="language-plaintext highlighter-rouge">pthread_cond_t</code>): 特定の条件が満たされるまでスレッドをブロックする。通常はミューテックスと組み合わせて使用される。</p>
+
+    <ul>
+      <li>関連するミューテックスを解放し、<code class="language-plaintext highlighter-rouge">futex</code>を使用して他のスレッドからのシグナルやブロードキャストを待つ。</li>
+    </ul>
+  </li>
+  <li>
+    <p><strong>Semaphore</strong> (<code class="language-plaintext highlighter-rouge">sem_t</code>): 共有リソースへのアクセスを制御。</p>
+
+    <ul>
+      <li>
+        <p>ミューテックスに似ていて、セマフォカウントがゼロであり、スレッドがそれを減少させようとすると、スレッドは<code class="language-plaintext highlighter-rouge">futex</code>を使用して待機する。カウントが増加すると、<code class="language-plaintext highlighter-rouge">futex</code>を使用して待機しているスレッドの1つを起こす。</p>
+      </li>
+      <li>
+        <p>所有権なし：どのスレッドからでも変更可能。</p>
+      </li>
+      <li>
+        <p>使用例: リソースプール（例: DB接続プール）/ producer/consumerの可用性管理</p>
+      </li>
+      <li>
+        <p>実装: カウンタ + キュー</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="futex">Futex</h2>
+
+<p>“Fast userspace mutex”の略。競合が発生した場合のみ、futexはカーネルとやり取りする。</p>
+
+<blockquote>
+  <p>メモ:</p>
+
+  <p><code class="language-plaintext highlighter-rouge">futex</code>はカーネルの関与を最小限に抑えるように設計されているため、一見カーネルの一部ではないように見えるが、実際にはカーネルの構成要素。</p>
+</blockquote>
+
+<ul>
+  <li>
+    <p>高速パス: ミューテックスが解放されている→ロックが取得される（ユーザー空間のみ）</p>
+  </li>
+  <li>
+    <p>遅延パス: ミューテックスが解放されていない→スレッドがシステムコールを行い、カーネルはミューテックスが解除されるまでスレッドをスリープさせる。</p>
+  </li>
+  <li>
+    <p><code class="language-plaintext highlighter-rouge">futex</code>は、スレッドを効率的にスリープさせ、ウェイクアップするメカニズムを提供し、カーネルが待機キューを管理する。</p>
+
+    <ul>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">futex_wait</code>: スレッドがfutex変数（通常は特定のメモリ位置）を待っていることを示すために使用される。条件が満たされていない場合（例: ロックが既に保持されている場合）、カーネルはスレッドをスリープさせる。</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">futex_wake</code>: futex変数を待機している1つまたは複数のスレッドを起こすために使用される。ロックが解除されたり条件が変わったりしたとき、futex_wakeを使用して待機中のスレッドに通知し、それによってスレッドが実行を続ける。</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>コンペア・アンド・スワップ（CAS）: ロック取得に使用されるアトミック操作。</p>
+
+    <ul>
+      <li>
+        <p>X86/64: <code class="language-plaintext highlighter-rouge">EAX</code>, <code class="language-plaintext highlighter-rouge">EBX</code>, <code class="language-plaintext highlighter-rouge">ECX</code>（汎用レジスタ）または<code class="language-plaintext highlighter-rouge">RAX</code>, <code class="language-plaintext highlighter-rouge">RBX</code>, <code class="language-plaintext highlighter-rouge">RCX</code>（64ビット汎用レジスタ）などを使い、<code class="language-plaintext highlighter-rouge">CMPXCHG destination, source</code>の命令。</p>
+      </li>
+      <li>
+        <p>Arm: 汎用レジスタ（例: <code class="language-plaintext highlighter-rouge">r0</code>, <code class="language-plaintext highlighter-rouge">r1</code>, etc.）上で<code class="language-plaintext highlighter-rouge">LDREX</code>（ロード専用）および<code class="language-plaintext highlighter-rouge">STREX</code>（ストア専用）の命令。</p>
+
+        <pre><code class="language-asm">  LDREX r0, [address]      ; 'address'の値を'r0'にロード
+  CMP r0, old_value        ; ロードした値を'old_value'と比較
+  STREXEQ r1, new_value, [address] ; 等しい場合、'new_value'を'address'にアトミックに格納
+</code></pre>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+      </div>
+    </main><footer class="site-footer h-card">
+  <data class="u-url" href="/jp/"></data>
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">yohei.codes</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col footer-col-1">
+        <ul class="contact-list">
+          <li class="p-name">yohei.codes</li><li><a class="u-email" href="mailto:me@yohei.codes">me@yohei.codes</a></li></ul>
+      </div>
+
+      <div class="footer-col footer-col-2"><ul class="social-media-list"><li><a href="https://github.com/ykskb"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#github"></use></svg> <span class="username">ykskb</span></a></li><li><a href="https://www.linkedin.com/in/yohei-kusakabe"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#linkedin"></use></svg> <span class="username">yohei-kusakabe</span></a></li><li><a href="https://www.twitter.com/yo__ohei"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#twitter"></use></svg> <span class="username">yo__ohei</span></a></li></ul>
+</div>
+
+      <div class="footer-col footer-col-3">
+        <p>I enjoy computer science stuff.</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+</body>
+
+</html>

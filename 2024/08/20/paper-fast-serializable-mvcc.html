@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>Paper: Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems | yohei.codes</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="Paper: Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems" />
+<meta property="og:locale" content="en" />
+<meta name="description" content="Paper: Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems" />
+<meta property="og:description" content="Paper: Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems" />
+<link rel="canonical" href="https://yohei.codes/2024/08/20/paper-fast-serializable-mvcc.html" />
+<meta property="og:url" content="https://yohei.codes/2024/08/20/paper-fast-serializable-mvcc.html" />
+<meta property="og:site_name" content="yohei.codes" />
+<meta property="og:image" content="https://yohei.codes/assets/images/screenshot.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2024-08-20T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://yohei.codes/assets/images/screenshot.png" />
+<meta property="twitter:title" content="Paper: Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2024-08-20T00:00:00+00:00","datePublished":"2024-08-20T00:00:00+00:00","description":"Paper: Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems","headline":"Paper: Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems","image":"https://yohei.codes/assets/images/screenshot.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://yohei.codes/2024/08/20/paper-fast-serializable-mvcc.html"},"url":"https://yohei.codes/2024/08/20/paper-fast-serializable-mvcc.html"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="https://yohei.codes/feed.xml" title="yohei.codes" /><script>
+if(!(window.doNotTrack === "1" || navigator.doNotTrack === "1" || navigator.doNotTrack === "yes" || navigator.msDoNotTrack === "1")) {
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-52885755-2', 'auto');
+  ga('send', 'pageview');
+}
+</script>
+  
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/images/favicon/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/favicon/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/favicon/favicon-16x16.png">
+    <link rel="manifest" href="/assets/images/favicon/manifest.json">
+    <link rel="mask-icon" href="/assets/images/favicon/safari-pinned-tab.svg" color="#5bbad5">
+    <meta name="msapplication-TileColor" content="#da532c">
+    <meta name="theme-color" content="#ffffff">
+  </head><body><header class="site-header" role="banner">
+
+    <div class="wrapper"><a class="site-title" rel="author" href="/">yohei.codes</a><nav class="site-nav">
+          <input type="checkbox" id="nav-trigger" class="nav-trigger" />
+          <label for="nav-trigger">
+            <span class="menu-icon">
+              <svg viewBox="0 0 18 15" width="18px" height="15px">
+                <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.032C17.335,0,18,0.665,18,1.484L18,1.484z M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.032C17.335,6.031,18,6.696,18,7.516L18,7.516z M18,13.516C18,14.335,17.335,15,16.516,15H1.484 C0.665,15,0,14.335,0,13.516l0,0c0-0.82,0.665-1.483,1.484-1.483h15.032C17.335,12.031,18,12.695,18,13.516L18,13.516z"/>
+              </svg>
+            </span>
+          </label>
+  
+          <div class="trigger"><a class="page-link" href="/about/">About</a>
+    
+    [          
+    
+        English ]
+    
+
+    
+    [          
+    
+        
+            <a href="/jp/2024/08/20/paper-fast-serializable-mvcc.html">日本語</a> ]
+        
+    
+</div>
+        </nav></div>
+  </header><main class="page-content" aria-label="Content">
+      <div class="wrapper">
+        <h1 id="paper-fast-serializable-multi-version-concurrency-control-for-main-memory-database-systems">Paper: Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems</h1>
+
+<p>This articles is notes taken from the paper: <a href="https://db.in.tum.de/~muehlbau/papers/mvcc.pdf">Fast Serializable Multi-Version Concurrency Control for Main-Memory Database Systems</a> published in 2015.</p>
+
+<blockquote>
+  <h3 id="series-papers-adopted-by-duckdb">Series: Papers adopted by DuckDB</h3>
+
+  <p>DuckDB can handle analytical query workloads incredibly fast. This series is my notes from the publications adopted by DuckDB (listed <a href="https://duckdb.org/why_duckdb.html#standing-on-the-shoulders-of-giants">here</a>).</p>
+
+  <ul>
+    <li><a href="/2024/08/16/paper-monet-db-x-100.html">Vectorized Query Engine</a></li>
+    <li>Fast Serializable MVCC: this article</li>
+    <li>Join Ordering Optimization (coming soon)</li>
+    <li>Unnesting Subqueries (coming soon)</li>
+  </ul>
+</blockquote>
+
+<h2 id="what-is-it-about">What is it about?</h2>
+
+<p>This paper proposes an implementation of multiversion concurrency controll (<a href="https://en.wikipedia.org/wiki/Multiversion_concurrency_control">MVCC</a>) which has less overhead and less locking while providing serializability. Most of MVCC implementations out there provide snapshot isolation (<a href="https://en.wikipedia.org/wiki/Snapshot_isolation">SI</a>).</p>
+
+<p>Overall, the approach is to provide the serializable isolation level by checking possible conflicts by the commit times while using snapshots for a transaction to data reads.</p>
+
+<blockquote>
+  <p>Database Isolation Levels: Snapshot vs Serializable</p>
+
+  <p>I compared snapshot isolation level and serializable isolation level <a href="/2023/09/07/snapshot-vs-serializable.html">here</a>.</p>
+
+  <p>Also it seems DuckDB has implemented its MVCC based on the concept of this paper, however without the serializable transaction controls. I haven’t confirmed 100%, but it seems DuckDB provides snapshot isolation level currently, which makes sense to me as its focus is more on OLAP instead of OLTP.</p>
+</blockquote>
+
+<h2 id="storage-locations-of-versions">Storage Locations of Versions</h2>
+
+<ul>
+  <li>
+    <p>Conventional MVCC: scattered versions</p>
+
+    <ul>
+      <li>
+        <p>Older versions are kept, and a background process cleans them when they are obsolete.</p>
+      </li>
+      <li>
+        <p>Storages in DBMS are dynamically allocated: different times of version entries lead to different locations and pages.</p>
+      </li>
+      <li>
+        <p>DBMS creates new versions on different pages to minimize contentition between concurrent transactions.</p>
+      </li>
+      <li>
+        <p>Versions are created after they are logged for recovery. New versions typically get created on separate storage locations so original versions can be preserved for recovery.</p>
+      </li>
+      <li>
+        <p>Data gets fragmented overtime in DBMS because available gaps are utilized by the system: versions are scattered across different locations.</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>Proposed MVCC: centralized versioning management</p>
+
+    <p>The newest data is updated in place and previous versions (before-images) are stored in undo buffers.</p>
+
+    <ul>
+      <li>
+        <p>Reduces the complexity of managing multiple versions scattered across DB.</p>
+      </li>
+      <li>
+        <p>At every successful commit, obsolete versions before this commit time get cleaned up.</p>
+      </li>
+      <li>
+        <p>Helps performance with cache-friendly format.</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<blockquote>
+  <p>The paper does not directly state it, however a good example of scattered versions is PostgreSQL in my opinion.</p>
+
+  <p>PostgreSQL is designed to store versions in its permanent storage for multiple benefits such as simplicity and durability. However this decision brings <a href="https://www.postgresql.org/docs/current/sql-vacuum.html"><code class="language-plaintext highlighter-rouge">VACUUM</code></a> business and a very expensive cost to retrieve accurate counts of records in a large table. Separating the version storage from perpament storage seems to be a good design of providing snapshots of records without complexities.</p>
+</blockquote>
+
+<h2 id="reduced-locking">Reduced Locking</h2>
+
+<ul>
+  <li>
+    <p>Conventional MVCC:</p>
+
+    <ul>
+      <li>
+        <p>Rows might be locked to prevent other transactions from updating them.</p>
+      </li>
+      <li>
+        <p>Locks or similar mechanisms might be used to control visibility of versions.</p>
+      </li>
+      <li>
+        <p>Version list might be locked while being read for stable view of the data.</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>Proposed MVCC:</p>
+
+    <p>Changes happen in place within undo buffers.</p>
+
+    <ul>
+      <li>
+        <p>Precision locking: only the localized areas being updated are locked.</p>
+
+        <p>Changes are confined to small and specific region of memory.</p>
+
+        <ul>
+          <li>
+            <p>Leads to shorter lock hold times.</p>
+          </li>
+          <li>
+            <p>Other transactions can read and update another part of undo buffers.</p>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="selective-checks">Selective Checks</h2>
+
+<ul>
+  <li>
+    <p>Conventional MVCC:</p>
+
+    <ul>
+      <li>
+        <p>Not only committed, but also uncommitted transactions might be checked.</p>
+      </li>
+      <li>
+        <p>Not only modifications, but also reads would be checked in conservative approaches. It is typically to handle scenarios like <a href="https://en.wikipedia.org/wiki/Snapshot_isolation#Definition">write skew anomaly</a>.</p>
+      </li>
+      <li>
+        <p>All the conflict types such as read-write, write-write and even read-read might be checked.</p>
+      </li>
+      <li>
+        <p>Checks of conflicting transactions might happen at global level, which would result in global locking.</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>Proposed MVCC:</p>
+
+    <ul>
+      <li>
+        <p>Only checks committed transactions that could affect the read predicates of ongoing transactions.</p>
+      </li>
+      <li>
+        <p>Defers much of conflict detection until commit time with a more focused scope.</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="efficiant-validation-and-conflict-resolution">Efficiant Validation and Conflict Resolution</h2>
+
+<ul>
+  <li>
+    <p>Conventional MVCC:</p>
+
+    <ul>
+      <li>
+        <p>Might require expensive global locks to ensure serializability</p>
+      </li>
+      <li>
+        <p>Might use timestamps:</p>
+
+        <ul>
+          <li>
+            <p>Atomic operations might be required to ensure uniqueness of timestamps, which leads to wait time.</p>
+          </li>
+          <li>
+            <p>Comparison process can be complex, and the system must validate read and write operations against the timestamps of potentially numerous other transaction.</p>
+          </li>
+          <li>
+            <p>If a transaction with an earlier timestamp has not yet committed, a transaction with a later timestamp might be forced to wait, leading to delay.</p>
+          </li>
+          <li>
+            <p>Rollback process can be expensive because it requires undoing all changes made by the aborted transaction, restoring the previous state, and possibly restarting the transaction.</p>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>Proposed MVCC:</p>
+
+    <ul>
+      <li>
+        <p>Validates serializability by checking conflicts only at commit time.</p>
+      </li>
+      <li>
+        <p>Versions in undo logs are version chains only with delta.</p>
+      </li>
+      <li>
+        <p>Versions in undo logs are indexed by IDs and/or timestamps.</p>
+      </li>
+      <li>
+        <p>Predicates of transactions are logged for fast validation of serializability.</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h1 id="benchmarks">Benchmarks</h1>
+
+<ul>
+  <li>
+    <p>TPC-C: write-heavy benchmark of order entries (8% read and 92% write transactions)</p>
+
+    <ul>
+      <li>
+        <p>Proposed MVCC:</p>
+
+        <ul>
+          <li>
+            <p><code class="language-plaintext highlighter-rouge">100,000 TPS</code> (transactions per second)</p>
+          </li>
+          <li>
+            <p>Performance cost of about 20% compared to single-version concurrency control</p>
+          </li>
+          <li>
+            <p>Scaled linearly up to 20 cores, however beyond that might require reducing global synchronization. <a href="https://wzheng.github.io/silo.pdf">Silo</a> implements this.</p>
+          </li>
+        </ul>
+      </li>
+      <li>
+        <p>2PL (two-phase locking) in HyPer: 5 times slower</p>
+      </li>
+      <li>
+        <p>Conventional MVCC: <code class="language-plaintext highlighter-rouge">50,000 TPS</code></p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>TATP: benchmark of point accesses &amp; whole-record updates (80% read and 20% write transactions), simulating a telecomm app</p>
+
+    <ul>
+      <li>
+        <p>Proposed MVCC: <code class="language-plaintext highlighter-rouge">407,564 TPS</code> shows minimal overhead comparing to single-version control and overperformed conventional MVCC.</p>
+      </li>
+      <li>
+        <p>Single-version control: <code class="language-plaintext highlighter-rouge">421,940 TPS</code></p>
+      </li>
+      <li>
+        <p>Conventional MVCC: <code class="language-plaintext highlighter-rouge">340,715 TPS</code></p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+
+      </div>
+    </main><footer class="site-footer h-card">
+  <data class="u-url" href="/"></data>
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">yohei.codes</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col footer-col-1">
+        <ul class="contact-list">
+          <li class="p-name">yohei.codes</li><li><a class="u-email" href="mailto:me@yohei.codes">me@yohei.codes</a></li></ul>
+      </div>
+
+      <div class="footer-col footer-col-2"><ul class="social-media-list"><li><a href="https://github.com/ykskb"><svg class="svg-icon"><use xlink:href="/assets/minima-social-icons.svg#github"></use></svg> <span class="username">ykskb</span></a></li><li><a href="https://www.linkedin.com/in/yohei-kusakabe"><svg class="svg-icon"><use xlink:href="/assets/minima-social-icons.svg#linkedin"></use></svg> <span class="username">yohei-kusakabe</span></a></li><li><a href="https://www.twitter.com/yo__ohei"><svg class="svg-icon"><use xlink:href="/assets/minima-social-icons.svg#twitter"></use></svg> <span class="username">yo__ohei</span></a></li></ul>
+</div>
+
+      <div class="footer-col footer-col-3">
+        <p>I enjoy computer science stuff.</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+</body>
+
+</html>

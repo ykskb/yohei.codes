@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="jp"><head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>xv6: OSはどうメモリを参照、管理するのか（前編） | yohei.codes</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="xv6: OSはどうメモリを参照、管理するのか（前編）" />
+<meta property="og:locale" content="jp" />
+<meta name="description" content="xv6: OSはどうメモリを参照、管理するのか（前編）" />
+<meta property="og:description" content="xv6: OSはどうメモリを参照、管理するのか（前編）" />
+<link rel="canonical" href="https://yohei.codes/jp/2020/06/18/xv6-memory-1.html" />
+<meta property="og:url" content="https://yohei.codes/2020/06/18/xv6-memory-1.html" />
+<meta property="og:site_name" content="yohei.codes" />
+<meta property="og:image" content="https://yohei.codes/assets/images/dax86-xv6.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2020-06-18T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://yohei.codes/assets/images/dax86-xv6.png" />
+<meta property="twitter:title" content="xv6: OSはどうメモリを参照、管理するのか（前編）" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2020-06-18T00:00:00+00:00","datePublished":"2020-06-18T00:00:00+00:00","description":"xv6: OSはどうメモリを参照、管理するのか（前編）","headline":"xv6: OSはどうメモリを参照、管理するのか（前編）","image":"https://yohei.codes/assets/images/dax86-xv6.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://yohei.codes/2020/06/18/xv6-memory-1.html"},"url":"https://yohei.codes/2020/06/18/xv6-memory-1.html"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/jp/assets/main.css"><link type="application/atom+xml" rel="alternate" href="https://yohei.codes/jp/feed.xml" title="yohei.codes" /><script>
+if(!(window.doNotTrack === "1" || navigator.doNotTrack === "1" || navigator.doNotTrack === "yes" || navigator.msDoNotTrack === "1")) {
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-52885755-2', 'auto');
+  ga('send', 'pageview');
+}
+</script>
+  
+<link rel="apple-touch-icon" sizes="180x180" href="/jp/assets/images/favicon/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/jp/assets/images/favicon/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/jp/assets/images/favicon/favicon-16x16.png">
+    <link rel="manifest" href="/jp/assets/images/favicon/manifest.json">
+    <link rel="mask-icon" href="/jp/assets/images/favicon/safari-pinned-tab.svg" color="#5bbad5">
+    <meta name="msapplication-TileColor" content="#da532c">
+    <meta name="theme-color" content="#ffffff">
+  </head><body><header class="site-header" role="banner">
+
+    <div class="wrapper"><a class="site-title" rel="author" href="/jp/">yohei.codes</a><nav class="site-nav">
+          <input type="checkbox" id="nav-trigger" class="nav-trigger" />
+          <label for="nav-trigger">
+            <span class="menu-icon">
+              <svg viewBox="0 0 18 15" width="18px" height="15px">
+                <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.032C17.335,0,18,0.665,18,1.484L18,1.484z M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.032C17.335,6.031,18,6.696,18,7.516L18,7.516z M18,13.516C18,14.335,17.335,15,16.516,15H1.484 C0.665,15,0,14.335,0,13.516l0,0c0-0.82,0.665-1.483,1.484-1.483h15.032C17.335,12.031,18,12.695,18,13.516L18,13.516z"/>
+              </svg>
+            </span>
+          </label>
+  
+          <div class="trigger"><a class="page-link" href="/jp/about/">About</a>
+    
+    [          
+    
+        
+            <a href=" /2020/06/18/xv6-memory-1.html">English</a> ]
+        
+    
+
+    
+    [          
+    
+        日本語 ]
+    
+</div>
+        </nav></div>
+  </header><main class="page-content" aria-label="Content">
+      <div class="wrapper">
+        <h1 id="xv6-osはどうメモリを参照管理するのか前編">xv6: OSはどうメモリを参照、管理するのか（前編）</h1>
+
+<p>メモリ管理の仕組みはOSを理解するのに重要なポイントの一つですが、勿論x86エミュレーターを自作する際にもメモリ構造をエミュレートする為にMMU（メモリーマネジメントユニット）がどういう構造なのか、そしてそれをxv6のコードがどう使うのか理解するのは必須でした。この記事ではxv6がどのように命令列をリンクし、ブート後プロテクトモードやページングに入り、カーネルのメイン関数に入るまでメモリを参照するのかを追います。</p>
+
+<p>少し具体的な話をすると、xv6のカーネルが<code class="language-plaintext highlighter-rouge">0x80100000</code>の仮想アドレスをベースに配置され読まれる仕組みについては、公式の教科書である<a href="https://pdos.csail.mit.edu/6.828/2012/xv6/book-rev7.pdf">the xv6 text book</a>やその他ネット上にあるxv6のメモリ管理の解説に書かれているのですが、それをカーネルソースコードのコンパイルやOSイメージ作成の段階から全て繋げた説明は中々見つからず、始めから終わりまで完全に理解するのは中々大変でした。この記事を含め当ブログではend-to-endな理解を重視しています。</p>
+
+<h2 id="makefile">Makefile</h2>
+
+<p>前回の<a href="/jp/2020/06/13/xv6-boot-block.html">xv6のブートブロックに関する記事</a>でもそうしたように、Makefileから見ていきます。MakefileにOSイメージの作成レシピがある為です。以下がカーネルのバイナリを作成するコマンドになります。</p>
+
+<div class="language-sh highlighter-rouge"><div class="highlight"><pre class="highlight"><code>kernel: <span class="si">$(</span>OBJS<span class="si">)</span> entry.o entryother initcode kernel.ld
+	<span class="si">$(</span>LD<span class="si">)</span> <span class="si">$(</span>LDFLAGS<span class="si">)</span> <span class="nt">-T</span> kernel.ld <span class="nt">-o</span> kernel entry.o <span class="si">$(</span>OBJS<span class="si">)</span> <span class="nt">-b</span> binary initcode entryother
+	<span class="si">$(</span>OBJDUMP<span class="si">)</span> <span class="nt">-S</span> kernel <span class="o">&gt;</span> kernel.asm
+	<span class="si">$(</span>OBJDUMP<span class="si">)</span> <span class="nt">-t</span> kernel | <span class="nb">sed</span> <span class="s1">'1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d'</span> <span class="o">&gt;</span> kernel.sym
+</code></pre></div></div>
+
+<p>ここではカーネルが必要とする全てのオブジェクトファイル、<code class="language-plaintext highlighter-rouge">$(OBJS)</code>をその他いくつかののファイルと一緒に依存リストに持つのが見られます。<code class="language-plaintext highlighter-rouge">entry.o</code>はCPUがブート後にカーネルのメイン関数に入る為のオブジェクトで、<code class="language-plaintext highlighter-rouge">initcode</code>はユーザーモードで新規のプロセスを初期化する命令列です。そしてこの記事でキーとなるのが<code class="language-plaintext highlighter-rouge">kernel.ld</code>というファイルです。</p>
+
+<h2 id="kernelld">kernel.ld</h2>
+
+<p>この<code class="language-plaintext highlighter-rouge">kernel.ld</code>というファイルはxv6のソースコード内に存在し、Makefileで<code class="language-plaintext highlighter-rouge">ld</code>コマンドに<code class="language-plaintext highlighter-rouge">-T</code>オプションの引数として使われるリンカースクリプトです。下記に見られる<code class="language-plaintext highlighter-rouge">SECTIONS</code>内の<code class="language-plaintext highlighter-rouge">.</code>は命令出力のアドレスを保持する特別なリンカーの変数で、ここでは値に<code class="language-plaintext highlighter-rouge">0x80100000</code>がセットされているのが見られます。これは出力されるバイナリの命令アドレスが<code class="language-plaintext highlighter-rouge">0x80100000</code>から始まるように指定している訳です。</p>
+
+<pre><code class="language-kernel.ld">OUTPUT_FORMAT("elf32-i386", "elf32-i386", "elf32-i386")
+OUTPUT_ARCH(i386)
+ENTRY(_start)
+
+SECTIONS
+{
+	/* Link the kernel at this address: "." means the current address */
+        /* Must be equal to KERNLINK */
+	. = 0x80100000;
+
+	.text : AT(0x100000) {
+		*(.text .stub .text.* .gnu.linkonce.t.*)
+	}
+</code></pre>
+
+<p>このリンカースクリプトの結果として、カーネルバイナリの命令列が指定されたアドレスから出力されます。これを<code class="language-plaintext highlighter-rouge">objdump</code>コマンドで以下のように確認することが出来ます。</p>
+
+<div class="language-sh highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>objdump <span class="nt">-M</span> intel <span class="nt">-S</span> kernelmemfs
+
+kernelmemfs:     file format elf32-i386
+
+
+Disassembly of section .text:
+
+80100000 &lt;multiboot_header&gt;:
+80100000:	02 b0 ad 1b 00 00    	add    dh,BYTE PTR <span class="o">[</span>eax+0x1bad]
+80100006:	00 00                	add    BYTE PTR <span class="o">[</span>eax],al
+80100008:	fe 4f 52             	dec    BYTE PTR <span class="o">[</span>edi+0x52]
+8010000b:	e4 0f                	<span class="k">in     </span>al,0xf
+
+8010000c &lt;entry&gt;:
+</code></pre></div></div>
+
+<h2 id="ブート時のメモリ構造">ブート時のメモリ構造</h2>
+
+<p><a href="/jp/2020/06/13/xv6-boot-block.html">ブートプロセスに入った時点</a>では、CPUは<a href="https://ja.wikipedia.org/wiki/%E3%83%AA%E3%82%A2%E3%83%AB%E3%83%A2%E3%83%BC%E3%83%89">リアルモード</a>下にあり、メモリは物理アドレスに一つの計算のみを通して参照されます。その計算というのは、命令なら<code class="language-plaintext highlighter-rouge">CS</code>、スタックなら<code class="language-plaintext highlighter-rouge">SS</code>というように目的に対応したセグメントレジスタの値を左に4シフトし、それを指定されたアドレスに足すというものです。そしてブートブロック中の<code class="language-plaintext highlighter-rouge">bootasm.S</code>の数命令の後、<a href="https://ja.wikipedia.org/wiki/%E3%83%97%E3%83%AD%E3%83%86%E3%82%AF%E3%83%88%E3%83%A2%E3%83%BC%E3%83%89">プロテクトモード</a>に入ります。ここでのプロテクトモードへの遷移の仕方は割とシンプルなもので、上記リンク先やその他多数の解説がウェブで見つかります。プロテクトモードへ入るとメモリーは<a href="https://en.wikipedia.org/wiki/Global_Descriptor_Table">GDT（グローバルディスクリプタテーブル）</a>を通して参照されます。このテーブルは複数のエントリーを持ち、個々のエントリーにはメモリのアドレス範囲を指定するベース値やリミット値に加えアクセス権限の情報が記されます。この時点で先述したセグメントレジスタの役割は変わっており、このテーブルのエントリーのインデックスを保持するポインターになります。</p>
+
+<h2 id="ページング">ページング</h2>
+
+<p>上記の<code class="language-plaintext highlighter-rouge">Makefile</code>や<code class="language-plaintext highlighter-rouge">kernal.ld</code>で触れたように、カーネルの命令アドレスは<code class="language-plaintext highlighter-rouge">0x80100000</code>をベースにしてリンクされます。これにはユーサーモードとカーネルモードの仮想メモリ範囲を切り分ける目的があり、それはx86の<a href="https://ja.wikipedia.org/wiki/%E3%83%9A%E3%83%BC%E3%82%B8%E3%83%B3%E3%82%B0%E6%96%B9%E5%BC%8F">ページング機構</a>を使って行われます。ページングには様々なモデルがあり、xv6のカーネルのメイン関数へ入る為の<code class="language-plaintext highlighter-rouge">entry.S</code>では<a href="https://en.wikipedia.org/wiki/Page_Size_Extension">page size extension</a>を使った1段階のページングが使われ、カーネルのメイン関数に入ってからはすぐに2段階のページング構造がセットアップされ使われます。</p>
+
+<h1 id="entrysのメモリ構造"><code class="language-plaintext highlighter-rouge">entry.S</code>のメモリ構造</h1>
+
+<p>先述したようにCPUがカーネルの大きな仮想アドレスを読むためにはページング機構を使う必要がある訳ですが、その為の設定は<code class="language-plaintext highlighter-rouge">entry.S</code>で行われます。下記が該当部分のコードです。</p>
+
+<pre><code class="language-asm"># By convention, the _start symbol specifies the ELF entry point.
+# Since we haven't set up virtual memory yet, our entry point is
+# the physical address of 'entry'.
+.globl _start
+_start = V2P_WO(entry)
+
+# Entering xv6 on boot processor, with paging off.
+.globl entry
+entry:
+  # Turn on page size extension for 4Mbyte pages
+  movl    %cr4, %eax
+  orl     $(CR4_PSE), %eax
+  movl    %eax, %cr4
+  # Set page directory
+  movl    $(V2P_WO(entrypgdir)), %eax
+  movl    %eax, %cr3
+  # Turn on paging.
+  movl    %cr0, %eax
+  orl     $(CR0_PG|CR0_WP), %eax
+  movl    %eax, %cr0
+</code></pre>
+
+<p>ここではページディレクトリのアドレスを保持するCR3レジスターに<code class="language-plaintext highlighter-rouge">$(V2P_WO(entrypgdir))</code>という値をロードしているのが見られます。まず<code class="language-plaintext highlighter-rouge">V2P_WO</code>というのは<code class="language-plaintext highlighter-rouge">memlayout.h</code>で定義されている引数から<code class="language-plaintext highlighter-rouge">KERN_BASE</code>(<code class="language-plaintext highlighter-rouge">0x80000000</code>)の値を引くマクロです。その引数である<code class="language-plaintext highlighter-rouge">entrypgdir</code>は<code class="language-plaintext highlighter-rouge">main.c</code>内で宣言されている配列で、ページディレクトリエントリの型（中身は<code class="language-plaintext highlighter-rouge">uint</code>）1024個分の領域を持っています。先述したように<code class="language-plaintext highlighter-rouge">entry.o</code>はカーネルバイナリの一部分で、大きな仮想アドレスをベースにリンクされている為、当然この配列へのアドレスも仮想アドレスになっています。そしてCR3に値をロードする時点ではページングはまだオンになっていません。その為CR3の値にそのまま仮想アドレスをセットしてもMMUはそれを物理アドレスとして参照しようとしてしまい、エラーとなります。これが<code class="language-plaintext highlighter-rouge">V2P_WO</code>を使って物理アドレスに変換した値をCR3にセットする理由です。（ちなみにこのアセンブリコード自体もELFファイルのエントリーポイントとなる<code class="language-plaintext highlighter-rouge">_start</code>に<code class="language-plaintext highlighter-rouge">V2P_WO</code>で<code class="language-plaintext highlighter-rouge">entry</code>のアドレスを物理アドレスに変換してセットしているのが分かります。）ではページディレクトリの配列である<code class="language-plaintext highlighter-rouge">entrypgdir</code>を見ていきます。</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">__attribute__</span><span class="p">((</span><span class="n">__aligned__</span><span class="p">(</span><span class="n">PGSIZE</span><span class="p">)))</span>
+<span class="n">pde_t</span> <span class="n">entrypgdir</span><span class="p">[</span><span class="n">NPDENTRIES</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// Map VA's [0, 4MB) to PA's [0, 4MB)</span>
+  <span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">|</span> <span class="n">PTE_P</span> <span class="o">|</span> <span class="n">PTE_W</span> <span class="o">|</span> <span class="n">PTE_PS</span><span class="p">,</span>
+  <span class="c1">// Map VA's [KERNBASE, KERNBASE+4MB) to PA's [0, 4MB)</span>
+  <span class="p">[</span><span class="n">KERNBASE</span><span class="o">&gt;&gt;</span><span class="n">PDXSHIFT</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">|</span> <span class="n">PTE_P</span> <span class="o">|</span> <span class="n">PTE_W</span> <span class="o">|</span> <span class="n">PTE_PS</span><span class="p">,</span>
+<span class="p">};</span>
+</code></pre></div></div>
+
+<p>ページディレクトリのエントリーが2つあり、両方とも<code class="language-plaintext highlighter-rouge">PTE_PS</code>のフラッグがORオペレーターで立てられているのが見られます。このフラッグはCR4レジスターの<a href="https://en.wikipedia.org/wiki/Page_Size_Extension">page size extension</a>ビットが立っている場合に於いてエントリーのページング構造を1段階に指定します。具体的には1段階のページング構造では（上記リンク先の図にも見られるように）アドレスの先頭10ビットで指定されたページディレクトリのエントリーが持つアドレスがすでに物理アドレスで、残りの22ビットがそこからのオフセットとして使われます。そしてその2つのエントリーのマッピングを見ていくと、一つ目は<code class="language-plaintext highlighter-rouge">0</code>番地を<code class="language-plaintext highlighter-rouge">0</code>番地に、二つ目は<code class="language-plaintext highlighter-rouge">KERNBASE</code>(<code class="language-plaintext highlighter-rouge">0x80000000</code>)を<code class="language-plaintext highlighter-rouge">0</code>番地にマップしているのが分かります。二つとも結局物理アドレスの<code class="language-plaintext highlighter-rouge">0</code>を指す訳ですが、それらはページング機構をオンにしてメイン関数へ遷移する際に使われます。ここまでブートから<code class="language-plaintext highlighter-rouge">entry.o</code>のコードまで追ってきている訳ですが、ページング機構をオンにする時点では<code class="language-plaintext highlighter-rouge">EIP</code>（命令ポインター）は物理アドレス空間の値で実行しています。<code class="language-plaintext highlighter-rouge">EIP</code>のアドレス参照も勿論ページングをオンにした際に適用されるので、ページングをオンにした瞬間に仮想アドレスのマッピングしかなかったら、命令列を参照出来なくなってしまいます。これが一つ目の<code class="language-plaintext highlighter-rouge">0-to-0</code>のマッピングが必要な理由で、この種のマッピングはIdentical Mappingと呼ばれます。長くなってしまいましたがこの後<code class="language-plaintext highlighter-rouge">entry.S</code>は<code class="language-plaintext highlighter-rouge">main.c</code>内の<code class="language-plaintext highlighter-rouge">main()</code>関数にジャンプします。ここでようやく<code class="language-plaintext highlighter-rouge">EIP</code>の値がジャンプ先の仮想アドレスとなり、2つ目のマッピングが使われ、仮想アドレス空間でカーネルのコードへの遷移が成功する訳です。</p>
+
+<p>カーネルのメイン関数に入るとすぐによく知られた2段階のページングモデルに移行しますが、ここまでで既に結構な説明の量になってしまっている上に2段階のメモリ管理は更なるボリュームになりかねないので、後編として別記事で書きたいと思います。読んで頂きありがとうございました。自分の学習を秩序立てて記すことはとても良いエクササイズで、更にそれが誰かの為になっていたらwinwinだと思います。</p>
+
+      </div>
+    </main><footer class="site-footer h-card">
+  <data class="u-url" href="/jp/"></data>
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">yohei.codes</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col footer-col-1">
+        <ul class="contact-list">
+          <li class="p-name">yohei.codes</li><li><a class="u-email" href="mailto:me@yohei.codes">me@yohei.codes</a></li></ul>
+      </div>
+
+      <div class="footer-col footer-col-2"><ul class="social-media-list"><li><a href="https://github.com/ykskb"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#github"></use></svg> <span class="username">ykskb</span></a></li><li><a href="https://www.linkedin.com/in/yohei-kusakabe"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#linkedin"></use></svg> <span class="username">yohei-kusakabe</span></a></li><li><a href="https://www.twitter.com/yo__ohei"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#twitter"></use></svg> <span class="username">yo__ohei</span></a></li></ul>
+</div>
+
+      <div class="footer-col footer-col-3">
+        <p>I enjoy computer science stuff.</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+</body>
+
+</html>

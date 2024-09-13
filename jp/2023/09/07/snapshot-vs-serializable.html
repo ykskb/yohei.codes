@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="jp"><head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>DB分離レベル: スナップショット vs シリアライザブル | yohei.codes</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="DB分離レベル: スナップショット vs シリアライザブル" />
+<meta property="og:locale" content="jp" />
+<meta name="description" content="DB分離レベル: スナップショット vs シリアライザブル" />
+<meta property="og:description" content="DB分離レベル: スナップショット vs シリアライザブル" />
+<link rel="canonical" href="https://yohei.codes/jp/2023/09/07/snapshot-vs-serializable.html" />
+<meta property="og:url" content="https://yohei.codes/2023/09/07/snapshot-vs-serializable.html" />
+<meta property="og:site_name" content="yohei.codes" />
+<meta property="og:image" content="https://yohei.codes/assets/images/screenshot.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2023-09-07T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://yohei.codes/assets/images/screenshot.png" />
+<meta property="twitter:title" content="DB分離レベル: スナップショット vs シリアライザブル" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2023-09-07T00:00:00+00:00","datePublished":"2023-09-07T00:00:00+00:00","description":"DB分離レベル: スナップショット vs シリアライザブル","headline":"DB分離レベル: スナップショット vs シリアライザブル","image":"https://yohei.codes/assets/images/screenshot.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://yohei.codes/2023/09/07/snapshot-vs-serializable.html"},"url":"https://yohei.codes/2023/09/07/snapshot-vs-serializable.html"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/jp/assets/main.css"><link type="application/atom+xml" rel="alternate" href="https://yohei.codes/jp/feed.xml" title="yohei.codes" /><script>
+if(!(window.doNotTrack === "1" || navigator.doNotTrack === "1" || navigator.doNotTrack === "yes" || navigator.msDoNotTrack === "1")) {
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-52885755-2', 'auto');
+  ga('send', 'pageview');
+}
+</script>
+  
+<link rel="apple-touch-icon" sizes="180x180" href="/jp/assets/images/favicon/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/jp/assets/images/favicon/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/jp/assets/images/favicon/favicon-16x16.png">
+    <link rel="manifest" href="/jp/assets/images/favicon/manifest.json">
+    <link rel="mask-icon" href="/jp/assets/images/favicon/safari-pinned-tab.svg" color="#5bbad5">
+    <meta name="msapplication-TileColor" content="#da532c">
+    <meta name="theme-color" content="#ffffff">
+  </head><body><header class="site-header" role="banner">
+
+    <div class="wrapper"><a class="site-title" rel="author" href="/jp/">yohei.codes</a><nav class="site-nav">
+          <input type="checkbox" id="nav-trigger" class="nav-trigger" />
+          <label for="nav-trigger">
+            <span class="menu-icon">
+              <svg viewBox="0 0 18 15" width="18px" height="15px">
+                <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.032C17.335,0,18,0.665,18,1.484L18,1.484z M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.032C17.335,6.031,18,6.696,18,7.516L18,7.516z M18,13.516C18,14.335,17.335,15,16.516,15H1.484 C0.665,15,0,14.335,0,13.516l0,0c0-0.82,0.665-1.483,1.484-1.483h15.032C17.335,12.031,18,12.695,18,13.516L18,13.516z"/>
+              </svg>
+            </span>
+          </label>
+  
+          <div class="trigger"><a class="page-link" href="/jp/about/">About</a>
+    
+    [          
+    
+        
+            <a href=" /2023/09/07/snapshot-vs-serializable.html">English</a> ]
+        
+    
+
+    
+    [          
+    
+        日本語 ]
+    
+</div>
+        </nav></div>
+  </header><main class="page-content" aria-label="Content">
+      <div class="wrapper">
+        <h1 id="db分離レベル-スナップショット-vs-シリアライザブル">DB分離レベル: スナップショット vs シリアライザブル</h1>
+
+<p>このページは自分がデータベース分離レベルを調べた際のメモを記事にしたものです。ここではスナップショット分離レベルとシリアライザブル分離レベルの違いにフォーカスしています。</p>
+
+<h2 id="ライトスキュー異常">ライトスキュー異常</h2>
+
+<p>スナップショット分離レベルとシリアライザブルな分離レベルを比較する時によく挙げられるのはライトスキュー異常と言われる現象で、スナップショット分離レベルモデルでは原理的に対応しないシナリオになる。これはスナップショット分離の衝突検知が同じレコードへの変更のみを対象にし、コミット時系列の並びを対象にしないことでパフォーマンスを出す仕様に起因する。よく使われる例は以下の通り。</p>
+
+<ul>
+  <li>
+    <p>当直のドクターを更新するトランザクション</p>
+
+    <ul>
+      <li>
+        <p>システムは当直のドクターが最低でも一人いることを保証する必要がある。</p>
+      </li>
+      <li>
+        <p>T1 (トランザクション1)は他に当直のドクターがいればドクターAの当直を取り消したい。</p>
+      </li>
+      <li>
+        <p>T2は他に当直のドクターがいればドクターBの当直を取り消したい。</p>
+      </li>
+      <li>
+        <p>T1とT2が時系列上オーバラップするタイミングで起きる。</p>
+      </li>
+    </ul>
+
+    <p>トランザクション動作：</p>
+
+    <ol>
+      <li>
+        <p>T1はDBのスナップショットからドクターA、ドクターB両方が当直であることを読む。</p>
+      </li>
+      <li>
+        <p>T2はDBのスナップショットからドクターA、ドクターB両方が当直であることを読む。</p>
+      </li>
+      <li>
+        <p>T1はドクターAの当直を消す更新をする。（成功する。）</p>
+      </li>
+      <li>
+        <p>T2はドクターBの当直を消す更新をする。（成功する。）</p>
+      </li>
+      <li>
+        <p>結果、システムの必要条項である最低でも一人の当直ドクターが保証されていない事態になる。</p>
+      </li>
+    </ol>
+  </li>
+</ul>
+
+<p>シリアライズ可能な分離レベルでは、時系列でのトランザクションの単一性を保証するため、T1もしくはT2のどちらか（先に始めた方）を成功させ、もう一つのトランザクションは、ロールバック＋リトライや先のトランザクションが終わるまでブロック後のリトライ、もしくはトランザクションを失敗させる。この例はread-write conflictと言われるタイプの衝突になる。</p>
+
+<p>勿論実装者がロックを適用するのもこの問題のメジャーな解決策の一つ。例えば<code class="language-plaintext highlighter-rouge">SELECT FOR UPDATE</code>は実行中のトランザクションが読み込んだデータを、トランザクションが終わるまで他のトランザクションから読めないようにロックする。上記の例ではT1がドクターAとドクターBの当直データを読んだ時点でT2からはそのデータをT1が終わるまで読むことができなくなる。これによりT2の読み込みが完了した時点でT1はコミット済みになり、T2はドクターAが当直をキャンセルしたことが読めるので、ドクターBの当直キャンセルの是非を判断することが可能となる。メジャーなDBでは大体<code class="language-plaintext highlighter-rouge">READ COMMITTED</code>か<code class="language-plaintext highlighter-rouge">REPEATABLE READ</code>がデフォルトの分離レベルなので、トランザクション実装にロックを考えずに書くとライトスキュー異常の可能性は排除できない。現実的な影響は以下の段落へ。</p>
+
+<h2 id="現実的な影響">現実的な影響</h2>
+
+<p><a href="https://en.wikipedia.org/wiki/Snapshot_isolation#Definition">Wikipediaの例</a>では、銀行のトランザクションが挙げられており、顧客が所有している複数の口座全てからほぼ同時に引き出しトランザクションを行うことで、残高より多い金額の引き出しが可能となるケースが説明されている。条件として顧客が複数の口座を所有している場合、残高のトータルが０以上であれば、特定の口座残高のマイナス（負債状態）が許される状態ではあるが、引き出し時のユーザー体験的に見た場合現実に十分あり得る設定と考えられる。口座所持者がそれぞれ残高<code class="language-plaintext highlighter-rouge">$100</code>の口座に<code class="language-plaintext highlighter-rouge">$200</code>を引き出すトランザクションを同時に発生させることで、<code class="language-plaintext highlighter-rouge">SELECT FOR UPDATE</code>などの対策が無い場合、スナップショット分離レベルのDBは両トランザクションを成功させてしまい、トータル残高は<code class="language-plaintext highlighter-rouge">-$200</code>となってしまう。</p>
+
+<p>一見これらの例は理論的な話に見えるかも知れないが実際に攻撃手法として使用されている例が報告されている。Stanford InfoLabのメンバーによる論文：「<a href="http://www.bailis.org/papers/acidrain-sigmod2017.pdf">ACIDRain: Concurrency-Related Attacks on
+Database-Backed Web Applications</a>」によるとビットコイン交換所が倒産する程のデータ崩壊やEコマースサイトへのギフトカードの超過額使用、商品インベントリデータの崩壊などの確認が報告されている。</p>
+
+      </div>
+    </main><footer class="site-footer h-card">
+  <data class="u-url" href="/jp/"></data>
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">yohei.codes</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col footer-col-1">
+        <ul class="contact-list">
+          <li class="p-name">yohei.codes</li><li><a class="u-email" href="mailto:me@yohei.codes">me@yohei.codes</a></li></ul>
+      </div>
+
+      <div class="footer-col footer-col-2"><ul class="social-media-list"><li><a href="https://github.com/ykskb"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#github"></use></svg> <span class="username">ykskb</span></a></li><li><a href="https://www.linkedin.com/in/yohei-kusakabe"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#linkedin"></use></svg> <span class="username">yohei-kusakabe</span></a></li><li><a href="https://www.twitter.com/yo__ohei"><svg class="svg-icon"><use xlink:href="/jp/assets/minima-social-icons.svg#twitter"></use></svg> <span class="username">yo__ohei</span></a></li></ul>
+</div>
+
+      <div class="footer-col footer-col-3">
+        <p>I enjoy computer science stuff.</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+</body>
+
+</html>

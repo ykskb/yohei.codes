@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>Thread, clone, futex and CMPXCHG | yohei.codes</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="Thread, clone, futex and CMPXCHG" />
+<meta property="og:locale" content="en" />
+<meta name="description" content="Thread, clone, futex and CMPXCHG" />
+<meta property="og:description" content="Thread, clone, futex and CMPXCHG" />
+<link rel="canonical" href="https://yohei.codes/2023/05/21/thread-clone-futex.html" />
+<meta property="og:url" content="https://yohei.codes/2023/05/21/thread-clone-futex.html" />
+<meta property="og:site_name" content="yohei.codes" />
+<meta property="og:image" content="https://yohei.codes/assets/images/screenshot.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2023-05-21T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://yohei.codes/assets/images/screenshot.png" />
+<meta property="twitter:title" content="Thread, clone, futex and CMPXCHG" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2023-05-21T00:00:00+00:00","datePublished":"2023-05-21T00:00:00+00:00","description":"Thread, clone, futex and CMPXCHG","headline":"Thread, clone, futex and CMPXCHG","image":"https://yohei.codes/assets/images/screenshot.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://yohei.codes/2023/05/21/thread-clone-futex.html"},"url":"https://yohei.codes/2023/05/21/thread-clone-futex.html"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="https://yohei.codes/feed.xml" title="yohei.codes" /><script>
+if(!(window.doNotTrack === "1" || navigator.doNotTrack === "1" || navigator.doNotTrack === "yes" || navigator.msDoNotTrack === "1")) {
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-52885755-2', 'auto');
+  ga('send', 'pageview');
+}
+</script>
+  
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/images/favicon/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/favicon/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/favicon/favicon-16x16.png">
+    <link rel="manifest" href="/assets/images/favicon/manifest.json">
+    <link rel="mask-icon" href="/assets/images/favicon/safari-pinned-tab.svg" color="#5bbad5">
+    <meta name="msapplication-TileColor" content="#da532c">
+    <meta name="theme-color" content="#ffffff">
+  </head><body><header class="site-header" role="banner">
+
+    <div class="wrapper"><a class="site-title" rel="author" href="/">yohei.codes</a><nav class="site-nav">
+          <input type="checkbox" id="nav-trigger" class="nav-trigger" />
+          <label for="nav-trigger">
+            <span class="menu-icon">
+              <svg viewBox="0 0 18 15" width="18px" height="15px">
+                <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.032C17.335,0,18,0.665,18,1.484L18,1.484z M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.032C17.335,6.031,18,6.696,18,7.516L18,7.516z M18,13.516C18,14.335,17.335,15,16.516,15H1.484 C0.665,15,0,14.335,0,13.516l0,0c0-0.82,0.665-1.483,1.484-1.483h15.032C17.335,12.031,18,12.695,18,13.516L18,13.516z"/>
+              </svg>
+            </span>
+          </label>
+  
+          <div class="trigger"><a class="page-link" href="/about/">About</a>
+    
+    [          
+    
+        English ]
+    
+
+    
+    [          
+    
+        
+            <a href="/jp/2023/05/21/thread-clone-futex.html">日本語</a> ]
+        
+    
+</div>
+        </nav></div>
+  </header><main class="page-content" aria-label="Content">
+      <div class="wrapper">
+        <h1 id="thread-clone-futex-and-cmpxchg">Thread, clone, futex and CMPXCHG</h1>
+
+<p>This is a page compiled from my notes I’ve taken on thread(pthread)-related topics sporadically over time. It’s my effort to sort out understanding and remember by putting them together.</p>
+
+<h2 id="pthread-internals">pthread Internals</h2>
+
+<p><a href="https://man7.org/linux/man-pages/man7/pthreads.7.html">pthreads</a> calls <a href="https://man7.org/linux/man-pages/man2/clone.2.html"><code class="language-plaintext highlighter-rouge">clone()</code></a>. It creates a <code class="language-plaintext highlighter-rouge">task_struct</code>.</p>
+
+<blockquote>
+  <p>Notes:</p>
+
+  <ul>
+    <li>
+      <p>pthread (POSIX threads) is part of libc. Most of Linux have it implemented by glibc (GNU C Library).</p>
+    </li>
+    <li>
+      <p>Implemented in user space, and interacts with kernel through system calls like <code class="language-plaintext highlighter-rouge">clone()</code> and <a href="https://man7.org/linux/man-pages/man2/futex.2.html"><code class="language-plaintext highlighter-rouge">futex</code></a>.</p>
+    </li>
+    <li>
+      <p><a href="https://man7.org/linux/man-pages/man2/fork.2.html"><code class="language-plaintext highlighter-rouge">fork()</code></a> (libc) also calls <code class="language-plaintext highlighter-rouge">clone()</code> but with different params.</p>
+    </li>
+  </ul>
+</blockquote>
+
+<ul>
+  <li>
+    <p><code class="language-plaintext highlighter-rouge">clone()</code> has different flags like these:</p>
+
+    <ul>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_VM</code>: memory space (<code class="language-plaintext highlighter-rouge">fork()</code> does not share memory space)</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_FS</code>: file system</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_FILES</code>: file descriptors</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_SIGHAND</code>: signal handlers</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_THREAD</code>: threads</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_PARENT_SETTID</code>:</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">CLONE_CHILD_CLEARTID</code>:</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<blockquote>
+  <p>Notes: libc vs kernel system call</p>
+
+  <p>Standard interface for kernel system calls is libc for portability and safety. Technically <code class="language-plaintext highlighter-rouge">man 2 [name]</code> describes kernel system call and <code class="language-plaintext highlighter-rouge">man 3 [name]</code> describes libc function, however even <code class="language-plaintext highlighter-rouge">man 2</code> displays lib in library section.</p>
+
+  <p>To find out if a libc function is just a wrapper or has more logics on top of system calls, we need to find out internals / knowledge of the function. But if a function only exists in <code class="language-plaintext highlighter-rouge">man 3</code> then it’s obvious that the function has custom logics wrapping system calls in libc.</p>
+</blockquote>
+
+<h2 id="kernel-perspective">Kernel Perspective</h2>
+
+<p>Both processes and threads are represented as <code class="language-plaintext highlighter-rouge">task_struct</code> in kernel.</p>
+
+<ul>
+  <li>
+    <p>Scheduling: unified task scheduling</p>
+
+    <p>Kernel doesn’t schedule processes and threads diffently though it knows about shared address spaces and resources for threads.</p>
+
+    <ul>
+      <li>
+        <p>Preemptive multitasking: OS can interrupt and switch between threads. (OS uses hardware timer interrupts.)</p>
+      </li>
+      <li>
+        <p>Criterion of multitasking:</p>
+
+        <ul>
+          <li>
+            <p>Time slice (quantum)</p>
+          </li>
+          <li>
+            <p>I/O operation</p>
+          </li>
+          <li>
+            <p>Priority</p>
+          </li>
+        </ul>
+      </li>
+      <li>
+        <p>Completely fair scheduler (CFS) is default. Other policies for real-time: <code class="language-plaintext highlighter-rouge">SCHED_FIFO</code> and <code class="language-plaintext highlighter-rouge">SCHED_RR</code> exist as well.</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>Thread states (registers, program counter and stack pointer etc) are saved as <code class="language-plaintext highlighter-rouge">Thread Control Block (TCB)</code> while process states are saved as <code class="language-plaintext highlighter-rouge">Process Control Block (PCB)</code>.</p>
+  </li>
+  <li>
+    <p>Difference between threads vs processes:</p>
+
+    <ul>
+      <li>
+        <p>Threads’ <code class="language-plaintext highlighter-rouge">task_struct</code> would be a part of a thread group of a process.</p>
+      </li>
+      <li>
+        <p>Threads’ structs point to shared resources.</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="controlling-kernel-schedule">Controlling Kernel Schedule</h2>
+
+<ul>
+  <li>
+    <p>CPU affinity: determines which CPU core a thread / process can run.</p>
+
+    <p>Binds threads to specific core, reducing context switching and improving cache utilization.</p>
+
+    <ul>
+      <li>
+        <p><a href="https://man7.org/linux/man-pages/man2/sched_setaffinity.2.html"><code class="language-plaintext highlighter-rouge">sched_setaffinity(pid, cpusetsize, mask)</code></a></p>
+      </li>
+      <li>
+        <p><a href="https://linux.die.net/man/2/sched_getaffinity"><code class="language-plaintext highlighter-rouge">sched_getaffinity(pid, cpusetsize, mask)</code></a></p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>Policy: different policies can be set.</p>
+
+    <p><a href="https://man7.org/linux/man-pages/man2/sched_setscheduler.2.html"><code class="language-plaintext highlighter-rouge">sched_setscheduler(pid, policy, param)</code></a> and <code class="language-plaintext highlighter-rouge">sched_getscheduler(pid)</code></p>
+
+    <ul>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">SCHED_OTHER</code>: default Linux time-sharing scheduler</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">SCHED_FIFO</code>: first-in, first-out real-time scheduling</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">SCHED_RR</code>: round-robin real-time scheduling</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">SCHED_IDLE</code>: very low priority for background tasks</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">SCHED_BATCH</code>: suitable for batch processing jobs</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>Priority: priority can be set as well.</p>
+
+    <p><a href="https://linux.die.net/man/2/setpriority"><code class="language-plaintext highlighter-rouge">setpriority(which, who, priority)</code></a> and <code class="language-plaintext highlighter-rouge">getpriority(which, who)</code></p>
+
+    <ul>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">type</code>: such as <code class="language-plaintext highlighter-rouge">PRIO_PROCESS</code></p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">who</code>: identifier</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">priority</code>: new priority value</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>Command:</p>
+
+    <p><code class="language-plaintext highlighter-rouge">nice</code> and <code class="language-plaintext highlighter-rouge">renice</code> modify priority.</p>
+
+    <ul>
+      <li>Value ranges from <code class="language-plaintext highlighter-rouge">-20</code> (highest) to <code class="language-plaintext highlighter-rouge">19</code> (lowest)</li>
+    </ul>
+  </li>
+  <li>
+    <p>pthread:</p>
+
+    <ul>
+      <li>
+        <p><a href="https://man7.org/linux/man-pages/man3/pthread_setschedparam.3.html"><code class="language-plaintext highlighter-rouge">pthread_setschedparam</code></a> and <code class="language-plaintext highlighter-rouge">pthread_getschedparam</code>: scheduling policy and params</p>
+      </li>
+      <li>
+        <p><a href="https://man7.org/linux/man-pages/man3/pthread_attr_setschedpolicy.3.html"><code class="language-plaintext highlighter-rouge">pthread_attr_setschedpolicy</code></a> and <code class="language-plaintext highlighter-rouge">pthread_attr_setschedparam</code>: thread attributes</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="user-level-threading">User-level Threading</h2>
+
+<ul>
+  <li>
+    <p>Coroutines: functions that can suspend execution and resume later. Common in Python (async/await), Kotlin and Lua.</p>
+  </li>
+  <li>
+    <p>Fibers: similar to coroutines but often more general-purpose. Ruby and C++ have it.</p>
+  </li>
+  <li>
+    <p><code class="language-plaintext highlighter-rouge">m:n</code> threading: <code class="language-plaintext highlighter-rouge">m</code> user-level threads mapped to fewer <code class="language-plaintext highlighter-rouge">n</code> kernel threads.</p>
+
+    <ul>
+      <li>
+        <p>Advantages: flexible / can adjust <code class="language-plaintext highlighter-rouge">n</code> / no context switches / can handle blocking operations</p>
+      </li>
+      <li>
+        <p>Disadvantages: complexity / debugging / limited OS support (Linux and Windows use <code class="language-plaintext highlighter-rouge">1:1</code> threading model)</p>
+      </li>
+      <li>
+        <p>OS level: mostly <code class="language-plaintext highlighter-rouge">1:1</code> for simplicity (Old Solaris and GNU Portable Threads provide <code class="language-plaintext highlighter-rouge">m:n</code> mapping)</p>
+      </li>
+      <li>
+        <p>Examples:</p>
+
+        <ul>
+          <li>
+            <p>Go: <code class="language-plaintext highlighter-rouge">goroutines</code> are scheduled onto a smaller number of OS threads.</p>
+          </li>
+          <li>
+            <p>Erlang: through BEAM virtual machine, lightweight processes are scheduled onto a smaller number of OS threads.</p>
+          </li>
+          <li>
+            <p>NodeJS: not conventional, but multiple tasks are handled concurrently with a small number of threads through event loop (event-driven architecture).</p>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<blockquote>
+  <p>Languages without <code class="language-plaintext highlighter-rouge">m:n</code></p>
+
+  <p>Languages like Java or Rust provide provide an interface to kernel threads with <code class="language-plaintext highlighter-rouge">1:1</code> mapping as a language feature instead of providing <code class="language-plaintext highlighter-rouge">m:n</code> or green thread model.</p>
+
+  <p>In those language, <code class="language-plaintext highlighter-rouge">m:n</code>, green thread or fiber model of multithreading are typically implemented as libraries outside of language features / designs.</p>
+</blockquote>
+
+<h2 id="synchronization-mechanisms">Synchronization Mechanisms</h2>
+
+<p>With multiple threads, contentions need to be handled. pthread provides synchronized primitives such as <code class="language-plaintext highlighter-rouge">mutex</code>, <code class="language-plaintext highlighter-rouge">condition variable</code> and <code class="language-plaintext highlighter-rouge">semaphore</code>.</p>
+
+<ul>
+  <li>
+    <p><strong>Mutex</strong> (<code class="language-plaintext highlighter-rouge">pthread_mutex_t</code>): only one thread can access a critical section of code at a time.</p>
+
+    <ul>
+      <li>
+        <p>Uses <code class="language-plaintext highlighter-rouge">futex</code>.</p>
+      </li>
+      <li>
+        <p>Has ownership: only lock owner thread can update.</p>
+      </li>
+      <li>
+        <p>Implementation: internal state (The kernel or operating system provides mechanisms to block and wake up threads.)</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p><strong>Condition variable</strong> (<code class="language-plaintext highlighter-rouge">pthread_cond_t</code>): blocks a thread until a particular condition is met, usually in combination with a mutex.</p>
+
+    <ul>
+      <li>It releases the associated mutex and uses <code class="language-plaintext highlighter-rouge">futex</code> to wait for a signal or broadcast from another thread.</li>
+    </ul>
+  </li>
+  <li>
+    <p><strong>Semaphore</strong> (<code class="language-plaintext highlighter-rouge">sem_t</code>): controls access to a shared resource.</p>
+
+    <ul>
+      <li>
+        <p>Similar to mutexes, when the semaphore count is zero and a thread tries to decrement it, the thread uses <code class="language-plaintext highlighter-rouge">futex</code> to wait. When the count is incremented, <code class="language-plaintext highlighter-rouge">futex</code> is used to wake up one of the waiting threads.</p>
+      </li>
+      <li>
+        <p>No ownership: any thread can update the value.</p>
+      </li>
+      <li>
+        <p>Use case: resource pool like DB connection pool / producer-consumer availability</p>
+      </li>
+      <li>
+        <p>Implementation: counter + wait queue</p>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="futex">Futex</h2>
+
+<p>Stands for “fast userspace mutex.” Only when contention occurs futex interacts with the kernel.</p>
+
+<blockquote>
+  <p>Notes:</p>
+
+  <p>It might seem like <code class="language-plaintext highlighter-rouge">futex</code> is not part of the kernel at first glance as it is designed to minimize kernel involvement in typical use cases, but it is a kernel construct.</p>
+</blockquote>
+
+<ul>
+  <li>
+    <p>Fast path: mutex is free → lock acquired (only in userspace)</p>
+  </li>
+  <li>
+    <p>Slow path: mutex is not free → thread makes a system call, and the kernel puts a thread to sleep until the mutex is unlocked.</p>
+  </li>
+  <li>
+    <p><code class="language-plaintext highlighter-rouge">futex</code> provides a mechanism to put threads to sleep and wake them up efficiently, with the kernel managing the wait queues.</p>
+
+    <ul>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">futex_wait</code>: A thread calls this to indicate that it is waiting on a futex variable (typically a specific memory location). The kernel puts the thread to sleep if the condition is not met (e.g., a lock is already held).</p>
+      </li>
+      <li>
+        <p><code class="language-plaintext highlighter-rouge">futex_wake</code>: used to wake one or more threads waiting on a futex variable. When a lock is released or a condition changes, futex_wake can be used to notify the waiting threads, allowing them to continue execution.</p>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <p>Compare-and-swap (CAS): atomic operation used for lock acquiring.</p>
+
+    <ul>
+      <li>
+        <p>X86/64: <code class="language-plaintext highlighter-rouge">CMPXCHG destination, source</code> with <code class="language-plaintext highlighter-rouge">EAX</code>, <code class="language-plaintext highlighter-rouge">EBX</code>, <code class="language-plaintext highlighter-rouge">ECX</code>, etc. (General-purpose registers) or <code class="language-plaintext highlighter-rouge">RAX</code>, <code class="language-plaintext highlighter-rouge">RBX</code>, <code class="language-plaintext highlighter-rouge">RCX</code>, etc. (64-bit general-purpose registers)</p>
+      </li>
+      <li>
+        <p>Arm: <code class="language-plaintext highlighter-rouge">LDREX</code> (load exclusive) and <code class="language-plaintext highlighter-rouge">STREX</code> (store exclusive) with General-purpose registers (e.g., <code class="language-plaintext highlighter-rouge">r0</code>, <code class="language-plaintext highlighter-rouge">r1</code>, etc.)</p>
+
+        <pre><code class="language-asm">  LDREX r0, [address]      ; Load the value at 'address' into 'r0'
+  CMP r0, old_value        ; Compare the loaded value with 'old_value'
+  STREXEQ r1, new_value, [address] ; If equal, store 'new_value' into 'address'  atomically
+</code></pre>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+      </div>
+    </main><footer class="site-footer h-card">
+  <data class="u-url" href="/"></data>
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">yohei.codes</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col footer-col-1">
+        <ul class="contact-list">
+          <li class="p-name">yohei.codes</li><li><a class="u-email" href="mailto:me@yohei.codes">me@yohei.codes</a></li></ul>
+      </div>
+
+      <div class="footer-col footer-col-2"><ul class="social-media-list"><li><a href="https://github.com/ykskb"><svg class="svg-icon"><use xlink:href="/assets/minima-social-icons.svg#github"></use></svg> <span class="username">ykskb</span></a></li><li><a href="https://www.linkedin.com/in/yohei-kusakabe"><svg class="svg-icon"><use xlink:href="/assets/minima-social-icons.svg#linkedin"></use></svg> <span class="username">yohei-kusakabe</span></a></li><li><a href="https://www.twitter.com/yo__ohei"><svg class="svg-icon"><use xlink:href="/assets/minima-social-icons.svg#twitter"></use></svg> <span class="username">yo__ohei</span></a></li></ul>
+</div>
+
+      <div class="footer-col footer-col-3">
+        <p>I enjoy computer science stuff.</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+</body>
+
+</html>

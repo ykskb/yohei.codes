@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>xv6: How exactly is memory addressed? (Part 1) | yohei.codes</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="xv6: How exactly is memory addressed? (Part 1)" />
+<meta property="og:locale" content="en" />
+<meta name="description" content="xv6: How exactly is memory addressed? (Part 1)" />
+<meta property="og:description" content="xv6: How exactly is memory addressed? (Part 1)" />
+<link rel="canonical" href="https://yohei.codes/2020/06/18/xv6-memory-1.html" />
+<meta property="og:url" content="https://yohei.codes/2020/06/18/xv6-memory-1.html" />
+<meta property="og:site_name" content="yohei.codes" />
+<meta property="og:image" content="https://yohei.codes/assets/images/dax86-xv6.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2020-06-18T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://yohei.codes/assets/images/dax86-xv6.png" />
+<meta property="twitter:title" content="xv6: How exactly is memory addressed? (Part 1)" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2020-06-18T00:00:00+00:00","datePublished":"2020-06-18T00:00:00+00:00","description":"xv6: How exactly is memory addressed? (Part 1)","headline":"xv6: How exactly is memory addressed? (Part 1)","image":"https://yohei.codes/assets/images/dax86-xv6.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://yohei.codes/2020/06/18/xv6-memory-1.html"},"url":"https://yohei.codes/2020/06/18/xv6-memory-1.html"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/main.css"><link type="application/atom+xml" rel="alternate" href="https://yohei.codes/feed.xml" title="yohei.codes" /><script>
+if(!(window.doNotTrack === "1" || navigator.doNotTrack === "1" || navigator.doNotTrack === "yes" || navigator.msDoNotTrack === "1")) {
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-52885755-2', 'auto');
+  ga('send', 'pageview');
+}
+</script>
+  
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/images/favicon/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/favicon/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/favicon/favicon-16x16.png">
+    <link rel="manifest" href="/assets/images/favicon/manifest.json">
+    <link rel="mask-icon" href="/assets/images/favicon/safari-pinned-tab.svg" color="#5bbad5">
+    <meta name="msapplication-TileColor" content="#da532c">
+    <meta name="theme-color" content="#ffffff">
+  </head><body><header class="site-header" role="banner">
+
+    <div class="wrapper"><a class="site-title" rel="author" href="/">yohei.codes</a><nav class="site-nav">
+          <input type="checkbox" id="nav-trigger" class="nav-trigger" />
+          <label for="nav-trigger">
+            <span class="menu-icon">
+              <svg viewBox="0 0 18 15" width="18px" height="15px">
+                <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.032C17.335,0,18,0.665,18,1.484L18,1.484z M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.032C17.335,6.031,18,6.696,18,7.516L18,7.516z M18,13.516C18,14.335,17.335,15,16.516,15H1.484 C0.665,15,0,14.335,0,13.516l0,0c0-0.82,0.665-1.483,1.484-1.483h15.032C17.335,12.031,18,12.695,18,13.516L18,13.516z"/>
+              </svg>
+            </span>
+          </label>
+  
+          <div class="trigger"><a class="page-link" href="/about/">About</a>
+    
+    [          
+    
+        English ]
+    
+
+    
+    [          
+    
+        
+            <a href="/jp/2020/06/18/xv6-memory-1.html">日本語</a> ]
+        
+    
+</div>
+        </nav></div>
+  </header><main class="page-content" aria-label="Content">
+      <div class="wrapper">
+        <h1 id="xv6-how-exactly-is-memory-addressed-part-1">xv6: How exactly is memory addressed? (Part 1)</h1>
+
+<p>Memory management is one of the key concepts to understand OS and architecture. Naturally it was necessary for me to understand it for the development of an x86 simulator, dax86 and it was indeed tricky to connect all the xv6’s source code with the understanding of MMU. This article talks about the initial part of memory addressing in xv6 as well as how it organizes the instruction addresses of kernel.</p>
+
+<p>A bit more specifically speaking, <a href="https://pdos.csail.mit.edu/6.828/2012/xv6/book-rev7.pdf">the xv6 text book</a> and many articles covering xv6’s memory management mention how kernel instructions of xv6 are managed at the virtual address of <code class="language-plaintext highlighter-rouge">0x80100000</code>, however it took some time for me to understand how exactly it happens end-to-end. So I intend to cover the mechanism from the creation of kernel executable to the switch of memory addressing mode to get into the kernel instructions.</p>
+
+<h2 id="makefile">Makefile</h2>
+
+<p>As my last article on <a href="/2020/06/13/xv6-boot-block.html">xv6’s bootblock</a>, let’s start from Makefile. That’s where some crafting of kernel happens. Here’s the recipe for the kernel image.</p>
+
+<div class="language-sh highlighter-rouge"><div class="highlight"><pre class="highlight"><code>kernel: <span class="si">$(</span>OBJS<span class="si">)</span> entry.o entryother initcode kernel.ld
+	<span class="si">$(</span>LD<span class="si">)</span> <span class="si">$(</span>LDFLAGS<span class="si">)</span> <span class="nt">-T</span> kernel.ld <span class="nt">-o</span> kernel entry.o <span class="si">$(</span>OBJS<span class="si">)</span> <span class="nt">-b</span> binary initcode entryother
+	<span class="si">$(</span>OBJDUMP<span class="si">)</span> <span class="nt">-S</span> kernel <span class="o">&gt;</span> kernel.asm
+	<span class="si">$(</span>OBJDUMP<span class="si">)</span> <span class="nt">-t</span> kernel | <span class="nb">sed</span> <span class="s1">'1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d'</span> <span class="o">&gt;</span> kernel.sym
+</code></pre></div></div>
+
+<p>It’s requiring all the kernel modules with <code class="language-plaintext highlighter-rouge">$(OBJS)</code> as well as some additional files. <code class="language-plaintext highlighter-rouge">entry.o</code> is for entering to the kernel code and <code class="language-plaintext highlighter-rouge">initcode</code> is the starting instructions of a new process in a user mode, but in this article <code class="language-plaintext highlighter-rouge">kernel.ld</code> is the key ingredient for the topic of the kernel’s instructions addresses.</p>
+
+<h2 id="kernelld">kernel.ld</h2>
+
+<p>The <code class="language-plaintext highlighter-rouge">kernel.ld</code> exists in the xv6 source code directory and in Makefile it is used in <code class="language-plaintext highlighter-rouge">ld</code> command with <code class="language-plaintext highlighter-rouge">-T</code> option which replaces the linker script. The beginning of the script looks like below. <code class="language-plaintext highlighter-rouge">.</code> in the <code class="language-plaintext highlighter-rouge">SECTIONS</code> is a specifal linker variable to specify current output counter, and we can see it’s set to <code class="language-plaintext highlighter-rouge">0x80100000</code>. This is specifying the starting instruction addresses of the kernel executable.</p>
+
+<pre><code class="language-kernel.ld">OUTPUT_FORMAT("elf32-i386", "elf32-i386", "elf32-i386")
+OUTPUT_ARCH(i386)
+ENTRY(_start)
+
+SECTIONS
+{
+	/* Link the kernel at this address: "." means the current address */
+        /* Must be equal to KERNLINK */
+	. = 0x80100000;
+
+	.text : AT(0x100000) {
+		*(.text .stub .text.* .gnu.linkonce.t.*)
+	}
+</code></pre>
+
+<p>As a result of the linker script, the kernel address starts from the specified address. We can observe this by running <code class="language-plaintext highlighter-rouge">objdump</code> command:</p>
+
+<div class="language-sh highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>objdump <span class="nt">-M</span> intel <span class="nt">-S</span> kernelmemfs
+
+kernelmemfs:     file format elf32-i386
+
+
+Disassembly of section .text:
+
+80100000 &lt;multiboot_header&gt;:
+80100000:	02 b0 ad 1b 00 00    	add    dh,BYTE PTR <span class="o">[</span>eax+0x1bad]
+80100006:	00 00                	add    BYTE PTR <span class="o">[</span>eax],al
+80100008:	fe 4f 52             	dec    BYTE PTR <span class="o">[</span>edi+0x52]
+8010000b:	e4 0f                	<span class="k">in     </span>al,0xf
+
+8010000c &lt;entry&gt;:
+</code></pre></div></div>
+
+<h2 id="memory-addressing-at-start">Memory Addressing at Start</h2>
+
+<p>When <a href="/2020/06/13/xv6-boot-block.html">a boot sector is loaded</a>, the CPU is in the <a href="https://en.wikipedia.org/wiki/Real_mode">real mode</a> where the memory is addressed with physical addresses with one calculation. The value of a corresponding segment register would be shifted to left by four and added to the specified memory address. After a small number of instructions in <code class="language-plaintext highlighter-rouge">bootasm.S</code>, the boot sector transitions to the <a href="https://en.wikipedia.org/wiki/Protected_mode">protected mode</a>. This transition is quite straightforward as many articles like <a href="https://wiki.osdev.org/Protected_Mode">this</a> cover and in xv6 we can find it happening in <code class="language-plaintext highlighter-rouge">bootasm.S</code>. Once entering to the protected mode, the memory is addressed through the entry of the <a href="https://en.wikipedia.org/wiki/Global_Descriptor_Table">global descriptor table</a>. Basically the entry contains the base address of a memory range and its limit as well as some additional info such as the required privilege to access the memory range. At this point the segment resisters become the selectors to point those entries as the index.</p>
+
+<h2 id="paging">Paging</h2>
+
+<p>As covered in <code class="language-plaintext highlighter-rouge">Makefile</code> and <code class="language-plaintext highlighter-rouge">kernel.ld</code> above, all the addresses in the kernel is based on <code class="language-plaintext highlighter-rouge">0x80100000</code>. This is for separating the memory space between the user mode and the kernel mode, leveraging the <a href="https://wiki.osdev.org/Paging">paging</a> of x86. Paging supports multiple different ways of structuring memory addressing. In the entry to the kernel of xv6, <code class="language-plaintext highlighter-rouge">entry.S</code>, single level paging with <a href="https://en.wikipedia.org/wiki/Page_Size_Extension">page size extension</a> is used. Later on after entering to the kernel, xv6 gets into the 2-level paging.</p>
+
+<h2 id="memory-addressing-to-enter-kernel">Memory Addressing to Enter Kernel</h2>
+
+<p>For xv6 to get into the kernel which has high addresses set, the paging needs go be turned on and this process happens in <code class="language-plaintext highlighter-rouge">entry.S</code>. Here’s the codes:</p>
+
+<pre><code class="language-asm"># Entering xv6 on boot processor, with paging off.
+.globl entry
+entry:
+  # Turn on page size extension for 4Mbyte pages
+  movl    %cr4, %eax
+  orl     $(CR4_PSE), %eax
+  movl    %eax, %cr4
+  # Set page directory
+  movl    $(V2P_WO(entrypgdir)), %eax
+  movl    %eax, %cr3
+  # Turn on paging.
+  movl    %cr0, %eax
+  orl     $(CR0_PG|CR0_WP), %eax
+  movl    %eax, %cr0
+</code></pre>
+
+<p>Here we can see <code class="language-plaintext highlighter-rouge">$(V2P_WO(entrypgdir))</code> being set as a page directory. Firstly <code class="language-plaintext highlighter-rouge">V2P_WO</code> is a macro defined in <code class="language-plaintext highlighter-rouge">memlayout.h</code> that subtracts <code class="language-plaintext highlighter-rouge">KERN_BASE</code> value from the argument. The reason it’s required is that at the point of setting the page directory, the paging mode is not turned on. If you remember, <code class="language-plaintext highlighter-rouge">entry.o</code> is a part of the kernel which has the high addresses. So the pointer to <code class="language-plaintext highlighter-rouge">entrypgdir</code> can’t be found from physical address space, and the mapping to the virtual address space is required, which is <code class="language-plaintext highlighter-rouge">entrypgdir</code> itself. It can be found in the bottom of <code class="language-plaintext highlighter-rouge">main.c</code> as below:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">__attribute__</span><span class="p">((</span><span class="n">__aligned__</span><span class="p">(</span><span class="n">PGSIZE</span><span class="p">)))</span>
+<span class="n">pde_t</span> <span class="n">entrypgdir</span><span class="p">[</span><span class="n">NPDENTRIES</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// Map VA's [0, 4MB) to PA's [0, 4MB)</span>
+  <span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">|</span> <span class="n">PTE_P</span> <span class="o">|</span> <span class="n">PTE_W</span> <span class="o">|</span> <span class="n">PTE_PS</span><span class="p">,</span>
+  <span class="c1">// Map VA's [KERNBASE, KERNBASE+4MB) to PA's [0, 4MB)</span>
+  <span class="p">[</span><span class="n">KERNBASE</span><span class="o">&gt;&gt;</span><span class="n">PDXSHIFT</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">|</span> <span class="n">PTE_P</span> <span class="o">|</span> <span class="n">PTE_W</span> <span class="o">|</span> <span class="n">PTE_PS</span><span class="p">,</span>
+<span class="p">};</span>
+</code></pre></div></div>
+
+<p>There are two mappings here and both have <code class="language-plaintext highlighter-rouge">PTE_PS</code> flag on. Having this flag on page directory entries as well as having the CR4 page size extension bit on enable single level paging. Coming to the memory address of these mappings, we can see first one mapping <code class="language-plaintext highlighter-rouge">0</code> to <code class="language-plaintext highlighter-rouge">0</code> and the other one mapping <code class="language-plaintext highlighter-rouge">KERNBASE</code> (<code class="language-plaintext highlighter-rouge">0x80000000</code>) to <code class="language-plaintext highlighter-rouge">0</code>. The reason of having these two mapping is for the transition to the second mapping. At the moment of turning the paging on, <code class="language-plaintext highlighter-rouge">EIP</code> (instruction pointer) is still holding the physical address of instructions. As the paging applies on the instruction retrieval from memory, if we don’t have the first entry of identical mapping, CPU won’t find the instruction and will end up with an error. After successful jump to <code class="language-plaintext highlighter-rouge">main()</code> at the last line of <code class="language-plaintext highlighter-rouge">entry.S</code>, CPU enters the high address space and starts using the second mapping of <code class="language-plaintext highlighter-rouge">KERNBASE</code> to <code class="language-plaintext highlighter-rouge">0</code>.</p>
+
+<p>Once the OS gets into main function of kernel, it switches to the conventional 2-level paging. I’ll cover it as the part 2 of this article since the memory management till this part is already a chunk of decent size to cover while 2-level paging might be even bigger. Anyways thanks for reading :)</p>
+
+      </div>
+    </main><footer class="site-footer h-card">
+  <data class="u-url" href="/"></data>
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">yohei.codes</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col footer-col-1">
+        <ul class="contact-list">
+          <li class="p-name">yohei.codes</li><li><a class="u-email" href="mailto:me@yohei.codes">me@yohei.codes</a></li></ul>
+      </div>
+
+      <div class="footer-col footer-col-2"><ul class="social-media-list"><li><a href="https://github.com/ykskb"><svg class="svg-icon"><use xlink:href="/assets/minima-social-icons.svg#github"></use></svg> <span class="username">ykskb</span></a></li><li><a href="https://www.linkedin.com/in/yohei-kusakabe"><svg class="svg-icon"><use xlink:href="/assets/minima-social-icons.svg#linkedin"></use></svg> <span class="username">yohei-kusakabe</span></a></li><li><a href="https://www.twitter.com/yo__ohei"><svg class="svg-icon"><use xlink:href="/assets/minima-social-icons.svg#twitter"></use></svg> <span class="username">yo__ohei</span></a></li></ul>
+</div>
+
+      <div class="footer-col footer-col-3">
+        <p>I enjoy computer science stuff.</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+</body>
+
+</html>
