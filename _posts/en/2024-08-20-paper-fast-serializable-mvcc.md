@@ -28,6 +28,8 @@ Overall, the approach is to provide the serializable isolation level by checking
 > Database Isolation Levels: Snapshot vs Serializable
 >
 > I compared snapshot isolation level and serializable isolation level [here](/2023/09/07/snapshot-vs-serializable.html).
+>
+> Also it seems DuckDB has implemented its MVCC based on the concept of this paper, however without the serializable transaction controls. I haven't confirmed 100%, but it seems DuckDB provides snapshot isolation level currently, which makes sense to me as its focus is more on OLAP instead of OLTP.
 
 ## Storage Locations of Versions
 
@@ -52,6 +54,10 @@ Overall, the approach is to provide the serializable isolation level by checking
     * At every successful commit, obsolete versions before this commit time get cleaned up. 
 
     * Helps performance with cache-friendly format.
+
+> The paper does not directly state it, however a good example of scattered versions is PostgreSQL in my opinion.
+>
+> PostgreSQL is designed to store versions in its permanent storage for multiple benefits such as simplicity and durability. However this decision brings [`VACUUM`](https://www.postgresql.org/docs/current/sql-vacuum.html) business and a very expensive cost to retrieve accurate counts of records in a large table. Separating the version storage from perpament storage seems to be a good design of providing snapshots of records without complexities.
 
 ## Reduced Locking
 
